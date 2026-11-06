@@ -1,0 +1,69 @@
+================================================================================
+สัญญาอนุญาตใช้งานซอฟต์แวร์ (SOFTWARE LICENSE AGREEMENT)
+Windows Terminal for Windows 10 LTSC 2019 (Thai UTF-8 Edition)
+Copyright (c) 2026 Rachata. All Rights Reserved.
+Based on Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 (CC BY-NC-ND 4.0)
+& Source-Available Non-Commercial Protection License
+================================================================================
+
+[ภาษาไทย — ข้อกำหนดและเงื่อนไขการใช้งาน]
+
+ซอฟต์แวร์นี้และซอร์สโค้ดทั้งหมด ("ซอฟต์แวร์") เป็นลิขสิทธิ์ของ Rachata ("ผู้พัฒนาต้นฉบับ")
+โดยเปิดให้บุคคลทั่วไปสามารถเข้าถึงซอร์สโค้ดเพื่อศึกษาและดาวน์โหลดไปใช้งานได้ฟรี
+ภายใต้เงื่อนไขที่ต้องปฏิบัติตามอย่างเคร่งครัดดังต่อไปนี้:
+
+1. ใช้งานฟรีเท่านั้น (Free Use Only):
+   อนุญาตให้ดาวน์โหลด ติดตั้ง และใช้งานซอฟต์แวร์นี้ได้ฟรีสำหรับการใช้งานส่วนบุคคล
+   การศึกษา หรือการใช้งานภายในองค์กร โดยไม่มีค่าใช้จ่าย
+
+2. ห้ามจำหน่ายหรือแสวงหากำไรเชิงพาณิชย์ (Strictly Non-Commercial / No Selling):
+   ห้ามมิให้ผู้ใดนำซอฟต์แวร์นี้ ซอร์สโค้ด หรือไฟล์ติดตั้ง (.exe) ไม่ว่าจะทั้งหมดหรือบางส่วน
+   ไปจำหน่าย ขายต่อ ให้เช่า เรียกเก็บเงิน หรือนำไปรวมอยู่ในแพ็กเกจสินค้า/บริการที่เรียกเก็บเงิน
+   โดยเด็ดขาด
+
+3. ห้ามลบหรือดัดแปลงเครดิตผู้พัฒนา และห้ามแอบอ้างผลงาน (No Plagiarism / Attribution Integrity):
+   - ห้ามลบ แก้ไข ปิดบัง หรือดัดแปลงชื่อผู้พัฒนาต้นฉบับ (Rachata) ข้อความลิขสิทธิ์
+     หรือข้อมูลในหน้าต่าง "เกี่ยวกับโปรแกรม (About)" และข้อมูลคุณสมบัติไฟล์ (File Properties)
+   - ห้ามแอบอ้างว่าตนเองเป็นผู้สร้างหรือเป็นเจ้าของผลงานซอฟต์แวร์นี้
+
+4. การดัดแปลงและการแจกจ่ายซ้ำ (Modifications & Redistribution):
+   - ผู้ใช้สามารถศึกษาและแก้ไขโค้ดเพื่อใช้งานส่วนตัวในเครื่องของตนเองได้
+   - ห้ามนำเวอร์ชันที่ถูกดัดแปลงแก้ไข (Mod) ไปแจกจ่ายซ้ำสู่สาธารณะโดยใช้ชื่อโครงการเดิม
+     หรือลบเครดิตผู้พัฒนาเดิม หรือนำไปฝังโค้ดอันตราย/โฆษณาแฝงโดยเด็ดขาด
+   - การแชร์หรือแจกจ่ายต่อสู่สาธารณะ ต้องเป็นการแชร์ลิงก์จาก GitHub ต้นฉบับของผู้พัฒนา
+     หรือไฟล์ต้นฉบับที่ไม่ถูกดัดแปลงแก้ไขเท่านั้น
+
+--------------------------------------------------------------------------------
+
+[ENGLISH — TERMS AND CONDITIONS]
+
+Copyright (c) 2026 Rachata. All Rights Reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated source code files (the "Software"), to view the
+source code and use the Software for personal, educational, or internal
+non-commercial purposes, subject to the following strict conditions:
+
+1. NON-COMMERCIAL USE ONLY (NO SELLING):
+   You may NOT sell, rent, lease, sublicense, monetize, or otherwise charge any
+   fee for the Software, its installer, its source code, or any bundle containing
+   the Software.
+
+2. STRICT ATTRIBUTION & ANTI-PLAGIARISM:
+   - You may NOT remove, alter, obscure, or falsify any copyright notices, author
+     credits ("Created by Rachata"), digital watermarks, or metadata embedded in
+     the source code or compiled binaries.
+   - You may NOT claim authorship or ownership of the Software.
+
+3. NO UNAUTHORIZED MODIFIED REDISTRIBUTION:
+   - While you may inspect and modify the source code for private personal study,
+     you may NOT publicly redistribute modified versions ("Mods") that impersonate
+     the official release, strip author credits, or bundle third-party adware/malware.
+   - Redistribution of the unmodified official installer must retain all original
+     credits and reference the official GitHub repository.
+
+4. DISCLAIMER OF WARRANTY:
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+================================================================================
