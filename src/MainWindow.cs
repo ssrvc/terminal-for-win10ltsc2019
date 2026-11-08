@@ -783,7 +783,7 @@ namespace WindowsTerminalLTSC
             }
             else
             {
-                AppendStyledText("⚠ คำเตือน: ตรวจพบการดัดแปลงเครดิตผู้พัฒนาโดยไม่ได้รับอนุญาต! ต้นฉบับพัฒนาโดย Rachata (แจกจ่ายฟรี ห้ามจำหน่าย)\r\n\r\n",
+                AppendStyledText("⚠ คำเตือน: ตรวจพบการดัดแปลงเครดิตผู้พัฒนาโดยไม่ได้รับอนุญาต! ต้นฉบับพัฒนาโดย ssrvc (แจกจ่ายฟรี ห้ามจำหน่าย)\r\n\r\n",
                     TerminalTheme.ParseColor(_theme.ErrorColor), true);
             }
         }
@@ -2918,7 +2918,7 @@ namespace WindowsTerminalLTSC
             MessageBox.Show(
                 this,
                 "Windows Terminal สำหรับ Windows 10 Enterprise LTSC 2019 (Build 17763)\n" +
-                "ผู้พัฒนาต้นฉบับ (Author): Rachata\n" +
+                "ผู้พัฒนาต้นฉบับ (Author): ssrvc\n" +
                 "สัญญาอนุญาต (License): เปิดซอร์สโค้ดให้ศึกษาและใช้งานฟรี — ห้ามนำไปจำหน่ายเชิงพาณิชย์ และห้ามลบหรือดัดแปลงเครดิตผู้พัฒนา\n\n" +
                 "คุณสมบัติเด่น:\n" +
                 "• แก้ปัญหา cmd.exe ปกติพิมพ์หรือแสดงผลภาษาไทยไม่ได้ (สระลอย/วรรณยุกต์ซ้อน/ต่างดาว)\n" +
@@ -2932,7 +2932,7 @@ namespace WindowsTerminalLTSC
                 "• Ctrl+Shift+A : เปิดหน้าต่างใหม่โหมด Administrator\n" +
                 "• Alt+Shift+D : แบ่งหน้าจอซ้าย-ขวา\n" +
                 "• Ctrl+Shift+F : ค้นหาและไฮไลต์ข้อความ",
-                "เกี่ยวกับ Windows Terminal LTSC — Created by Rachata",
+                "เกี่ยวกับ Windows Terminal LTSC — Created by ssrvc",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
         }

@@ -247,7 +247,7 @@ namespace WindowsTerminalLTSCSetup
                     uninstKey.SetValue("DisplayName", "Windows Terminal LTSC 2019 (รองรับภาษาไทย)", RegistryValueKind.String);
                     uninstKey.SetValue("DisplayIcon", icoPath, RegistryValueKind.String);
                     uninstKey.SetValue("DisplayVersion", "2.0.17763", RegistryValueKind.String);
-                    uninstKey.SetValue("Publisher", "Rachata (Free Non-Commercial Open Source)", RegistryValueKind.String);
+                    uninstKey.SetValue("Publisher", "ssrvc (Free Non-Commercial Open Source)", RegistryValueKind.String);
                     uninstKey.SetValue("InstallLocation", installDir, RegistryValueKind.String);
                     uninstKey.SetValue("UninstallString", "\"" + exePath + "\" --uninstall", RegistryValueKind.String);
                     uninstKey.SetValue("QuietUninstallString", "\"" + exePath + "\" --uninstall --silent", RegistryValueKind.String);
@@ -562,7 +562,7 @@ namespace WindowsTerminalLTSCSetup
 
             heroTextStack.Children.Add(new TextBlock
             {
-                Text = "เทอร์มินัลยุคใหม่ที่ออกแบบมาเพื่อ Windows 10 Enterprise LTSC 2019 (Build 17763) โดยเฉพาะ\nพัฒนาโดย Rachata — แจกจ่ายฟรี (Free Non-Commercial) ห้ามนำไปจำหน่ายหรือดัดแปลงเครดิตผู้พัฒนา",
+                Text = "เทอร์มินัลยุคใหม่ที่ออกแบบมาเพื่อ Windows 10 Enterprise LTSC 2019 (Build 17763) โดยเฉพาะ\nพัฒนาโดย ssrvc — แจกจ่ายฟรี (Free Non-Commercial) ห้ามนำไปจำหน่ายหรือดัดแปลงเครดิตผู้พัฒนา",
                 Foreground = new SolidColorBrush(Color.FromRgb(185, 200, 225)),
                 FontSize = 12.5,
                 LineHeight = 18

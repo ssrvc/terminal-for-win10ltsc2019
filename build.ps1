@@ -39,7 +39,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "Build succeeded: $outExe" -ForegroundColor Green
 
 # Prepare Authenticode certificate for 100% clean antivirus / SmartScreen reputation
-$certSubject = "CN=Windows Terminal LTSC 2019, O=Rachata"
+$certSubject = "CN=Windows Terminal LTSC 2019, O=ssrvc"
 $cert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert -ErrorAction SilentlyContinue | Where-Object { $_.Subject -eq $certSubject } | Select-Object -First 1
 if ($null -eq $cert) {
     Write-Host "Creating local Authenticode code signing certificate..." -ForegroundColor Cyan

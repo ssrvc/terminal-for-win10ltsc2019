@@ -17,8 +17,8 @@ namespace WindowsTerminalLTSC
 {
     public static class SystemIntegration
     {
-        public const string OfficialAuthorCredit = "พัฒนาโดย Rachata | แจกจ่ายฟรี (Free Non-Commercial — ห้ามนำไปจำหน่าย)";
-        // SHA-256 of "RACHATA_WT_LTSC_2019:" + OfficialAuthorCredit
+        public const string OfficialAuthorCredit = "พัฒนาโดย ssrvc | แจกจ่ายฟรี (Free Non-Commercial — ห้ามนำไปจำหน่าย)";
+        // SHA-256 of "SSRVC_WT_LTSC_2019:" + OfficialAuthorCredit
         private const string ExpectedCreditHash = "6B6E03A0420E1E086475890A4D0946E0F58A90717B6073F424756178436F0A9C";
 
         public static bool VerifyAuthorCreditIntegrity(out string displayCredit)
@@ -29,11 +29,11 @@ namespace WindowsTerminalLTSC
                 var asm = Assembly.GetExecutingAssembly();
                 var companyAttr = Attribute.GetCustomAttribute(asm, typeof(AssemblyCompanyAttribute)) as AssemblyCompanyAttribute;
                 var copyrightAttr = Attribute.GetCustomAttribute(asm, typeof(AssemblyCopyrightAttribute)) as AssemblyCopyrightAttribute;
-                if (companyAttr == null || companyAttr.Company.IndexOf("Rachata", StringComparison.Ordinal) < 0)
+                if (companyAttr == null || companyAttr.Company.IndexOf("ssrvc", StringComparison.Ordinal) < 0)
                     return false;
-                if (copyrightAttr == null || copyrightAttr.Copyright.IndexOf("Rachata", StringComparison.Ordinal) < 0)
+                if (copyrightAttr == null || copyrightAttr.Copyright.IndexOf("ssrvc", StringComparison.Ordinal) < 0)
                     return false;
-                if (OfficialAuthorCredit.IndexOf("Rachata", StringComparison.Ordinal) < 0 ||
+                if (OfficialAuthorCredit.IndexOf("ssrvc", StringComparison.Ordinal) < 0 ||
                     OfficialAuthorCredit.IndexOf("ห้ามนำไปจำหน่าย", StringComparison.Ordinal) < 0)
                     return false;
                 return true;

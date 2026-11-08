@@ -3,7 +3,7 @@
   <h1>Windows Terminal LTSC 2019 (Thai UTF-8 Edition)</h1>
   <p><b>แอปพลิเคชันเทอร์มินัลยุคใหม่สำหรับ Windows 10 Enterprise LTSC 2019 (Build 17763) — รองรับภาษาไทยสมบูรณ์แบบ 100%</b></p>
   <p>
-    <b>ผู้พัฒนา (Author):</b> Rachata &nbsp;|&nbsp;
+    <b>ผู้พัฒนา (Author):</b> ssrvc &nbsp;|&nbsp;
     <b>สัญญาอนุญาต (License):</b> Free Non-Commercial (ใช้งานฟรี ห้ามจำหน่ายเชิงพาณิชย์ และห้ามลบเครดิตผู้พัฒนา)
   </p>
 </div>
@@ -88,9 +88,9 @@ Get-FileHash .\WindowsTerminalLTSC-Setup.exe -Algorithm SHA256
 
 ## สัญญาอนุญาตและลิขสิทธิ์ (License & Anti-Abuse Notice)
 
-**Copyright © 2026 Rachata. All Rights Reserved.**
+**Copyright © 2026 ssrvc. All Rights Reserved.**
 
 ซอฟต์แวร์นี้เปิดให้ดูซอร์สโค้ดและดาวน์โหลดไปใช้งานได้ **ฟรี (Free Non-Commercial)** ภายใต้เงื่อนไขในไฟล์ [`LICENSE`](LICENSE):
 1. **ห้ามนำไปจำหน่ายเชิงพาณิชย์ (No Commercial Sale)**: ห้ามนำโปรแกรม ซอร์สโค้ด หรือตัวติดตั้งไปขาย เช่า หรือเรียกเก็บเงินไม่ว่ากรณีใดๆ
-2. **ห้ามลบหรือดัดแปลงเครดิตผู้พัฒนา (No Removal of Attribution)**: ห้ามลบ แก้ไข หรือปิดบังชื่อผู้พัฒนาต้นฉบับ (`Rachata`) ทั้งในซอร์สโค้ด หน้าต่างโปรแกรม และข้อมูลคุณสมบัติไฟล์ (File Properties)
+2. **ห้ามลบหรือดัดแปลงเครดิตผู้พัฒนา (No Removal of Attribution)**: ห้ามลบ แก้ไข หรือปิดบังชื่อผู้พัฒนาต้นฉบับ (`ssrvc`) ทั้งในซอร์สโค้ด หน้าต่างโปรแกรม และข้อมูลคุณสมบัติไฟล์ (File Properties)
 3. **ห้ามแอบอ้างผลงานหรือแจกจ่ายไฟล์ดัดแปลงอันตราย (No Plagiarism / Malicious Mods)**: ห้ามแอบอ้างเป็นเจ้าของผลงาน และห้ามนำเวอร์ชันดัดแปลงไปแจกจ่ายซ้ำโดยแอบอ้างเป็นไฟล์ทางการ

@@ -1,14 +1,14 @@
 ================================================================================
 สัญญาอนุญาตใช้งานซอฟต์แวร์ (SOFTWARE LICENSE AGREEMENT)
 Windows Terminal for Windows 10 LTSC 2019 (Thai UTF-8 Edition)
-Copyright (c) 2026 Rachata. All Rights Reserved.
+Copyright (c) 2026 ssrvc. All Rights Reserved.
 Based on Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 (CC BY-NC-ND 4.0)
 & Source-Available Non-Commercial Protection License
 ================================================================================
 
 [ภาษาไทย — ข้อกำหนดและเงื่อนไขการใช้งาน]
 
-ซอฟต์แวร์นี้และซอร์สโค้ดทั้งหมด ("ซอฟต์แวร์") เป็นลิขสิทธิ์ของ Rachata ("ผู้พัฒนาต้นฉบับ")
+ซอฟต์แวร์นี้และซอร์สโค้ดทั้งหมด ("ซอฟต์แวร์") เป็นลิขสิทธิ์ของ ssrvc ("ผู้พัฒนาต้นฉบับ")
 โดยเปิดให้บุคคลทั่วไปสามารถเข้าถึงซอร์สโค้ดเพื่อศึกษาและดาวน์โหลดไปใช้งานได้ฟรี
 ภายใต้เงื่อนไขที่ต้องปฏิบัติตามอย่างเคร่งครัดดังต่อไปนี้:
 
@@ -22,7 +22,7 @@ Based on Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 (CC BY-NC-
    โดยเด็ดขาด
 
 3. ห้ามลบหรือดัดแปลงเครดิตผู้พัฒนา และห้ามแอบอ้างผลงาน (No Plagiarism / Attribution Integrity):
-   - ห้ามลบ แก้ไข ปิดบัง หรือดัดแปลงชื่อผู้พัฒนาต้นฉบับ (Rachata) ข้อความลิขสิทธิ์
+   - ห้ามลบ แก้ไข ปิดบัง หรือดัดแปลงชื่อผู้พัฒนาต้นฉบับ (ssrvc) ข้อความลิขสิทธิ์
      หรือข้อมูลในหน้าต่าง "เกี่ยวกับโปรแกรม (About)" และข้อมูลคุณสมบัติไฟล์ (File Properties)
    - ห้ามแอบอ้างว่าตนเองเป็นผู้สร้างหรือเป็นเจ้าของผลงานซอฟต์แวร์นี้
 
@@ -37,7 +37,7 @@ Based on Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 (CC BY-NC-
 
 [ENGLISH — TERMS AND CONDITIONS]
 
-Copyright (c) 2026 Rachata. All Rights Reserved.
+Copyright (c) 2026 ssrvc. All Rights Reserved.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of
 this software and associated source code files (the "Software"), to view the
@@ -51,7 +51,7 @@ non-commercial purposes, subject to the following strict conditions:
 
 2. STRICT ATTRIBUTION & ANTI-PLAGIARISM:
    - You may NOT remove, alter, obscure, or falsify any copyright notices, author
-     credits ("Created by Rachata"), digital watermarks, or metadata embedded in
+     credits ("Created by ssrvc"), digital watermarks, or metadata embedded in
      the source code or compiled binaries.
    - You may NOT claim authorship or ownership of the Software.
 
