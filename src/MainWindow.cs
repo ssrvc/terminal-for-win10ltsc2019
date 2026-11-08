@@ -36,6 +36,7 @@ namespace WindowsTerminalLTSC
         public TextBox InputBox { get; private set; }
         public TextBlock PromptLabel { get; private set; }
         public Border InputBarBorder { get; private set; }
+        public Border ActivityBannerBorder { get; private set; }
 
         private Paragraph _currentParagraph;
         private Run _liveInputRun;
@@ -44,10 +45,37 @@ namespace WindowsTerminalLTSC
         private TerminalTheme _theme;
         private TerminalSettings _settings;
         private DispatcherTimer _cursorTimer;
+        private DispatcherTimer _activityTimer;
         private bool _cursorVisible = true;
         private bool _syncingInput = false;
         private int _lastSearchMatchIndex = -1;
         private string _lastSearchQuery = "";
+
+        private TextBlock _activityIconBlock;
+        private TextBlock _activityTitleBlock;
+        private TextBlock _activityElapsedBlock;
+        private StackPanel _ynButtonsPanel;
+        private Button _btnYes;
+        private Button _btnNo;
+        private Button _btnAll;
+        private Button _btnContinue;
+        private Button _btnElevate;
+        private Button _btnDismissElevate;
+        private Button _btnExitTui;
+        private TuiSurfaceControl _activeTuiSurface;
+        private string _activeTuiCommandLine = "";
+        private InteractivePromptKind _currentPromptKind = InteractivePromptKind.None;
+
+        public bool IsInTuiMode
+        {
+            get { return _activeTuiSurface != null; }
+        }
+        private string _lastExecutedCommand = "";
+        private string _pendingElevationRetryCommand = null;
+        private string _cachedLiveDownloadText = null;
+        private int _spinnerTickCount = 0;
+        private int _spinnerIndex = 0;
+        private static readonly string[] SpinnerFrames = new[] { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" };
 
         private static readonly Regex UrlRegex = new Regex(@"(https?://[^\s""'<>]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private const int MaxScrollbackInlines = 3200;
@@ -66,7 +94,8 @@ namespace WindowsTerminalLTSC
             AllowDrop = true;
 
             RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // Activity & (Y/N)? Banner
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // Command Input Bar
 
             var doc = new FlowDocument
             {
@@ -142,7 +171,12 @@ namespace WindowsTerminalLTSC
             SetRow(TerminalBox, 0);
             Children.Add(TerminalBox);
 
-            // Bottom Thai-Friendly Smart Command Input Bar
+            // Row 1: Smart Activity & Interactive (Y/N)? Banner
+            ActivityBannerBorder = BuildActivityBanner();
+            SetRow(ActivityBannerBorder, 1);
+            Children.Add(ActivityBannerBorder);
+
+            // Row 2: Bottom Thai-Friendly Smart Command Input Bar
             InputBarBorder = new Border
             {
                 BorderThickness = new Thickness(0, 1, 0, 0),
@@ -191,6 +225,7 @@ namespace WindowsTerminalLTSC
             {
                 if (_syncingInput) return;
                 UpdateLiveInlineInput(InputBox.Text);
+                UpdateTypingHintBanner(InputBox.Text);
             };
 
             InputBox.PreviewKeyDown += InputBox_PreviewKeyDown;
@@ -200,7 +235,7 @@ namespace WindowsTerminalLTSC
             var hintPanel = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
             var sendBtn = CreateMiniButton("รัน (Enter)", "ส่งคำสั่ง (Execute Command)", () => SubmitCurrentCommand());
             var clearBtn = CreateMiniButton("ล้างจอ", "ล้างหน้าจอ (Ctrl+L)", () => ClearScreenAndShowPrompt());
-            var ctrlCBtn = CreateMiniButton("หยุด (Ctrl+C)", "หยุดคำสั่งที่กำลังทำงาน (Ctrl+C)", () => Session.Interrupt());
+            var ctrlCBtn = CreateMiniButton("หยุด (Ctrl+C)", "หยุดคำสั่งที่กำลังทำงาน (Ctrl+C)", () => PerformInterrupt());
             hintPanel.Children.Add(sendBtn);
             hintPanel.Children.Add(clearBtn);
             hintPanel.Children.Add(ctrlCBtn);
@@ -208,7 +243,7 @@ namespace WindowsTerminalLTSC
             inputGrid.Children.Add(hintPanel);
 
             InputBarBorder.Child = inputGrid;
-            SetRow(InputBarBorder, 1);
+            SetRow(InputBarBorder, 2);
             Children.Add(InputBarBorder);
 
             _cursorTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(530) };
@@ -224,9 +259,36 @@ namespace WindowsTerminalLTSC
             };
             _cursorTimer.Start();
 
+            _activityTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120) };
+            _activityTimer.Tick += (s, e) =>
+            {
+                if (Session != null && Session.IsBusy)
+                {
+                    _spinnerTickCount++;
+                    _spinnerIndex = (_spinnerIndex + 1) % SpinnerFrames.Length;
+                    if (_currentPromptKind == InteractivePromptKind.None)
+                    {
+                        _activityIconBlock.Text = SpinnerFrames[_spinnerIndex];
+                    }
+                    if (_spinnerTickCount % 5 == 0)
+                    {
+                        _cachedLiveDownloadText = CommandDescriber.TryGetLiveDownloadProgress(
+                            Session.CurrentCommand,
+                            Session.CurrentDirectory,
+                            Session.CommandStartTime);
+                    }
+                    double secs = (DateTime.Now - Session.CommandStartTime).TotalSeconds;
+                    if (!string.IsNullOrEmpty(_cachedLiveDownloadText))
+                        _activityElapsedBlock.Text = string.Format("{0}  |  ⏱ {1:0.0} วินาที", _cachedLiveDownloadText, secs);
+                    else
+                        _activityElapsedBlock.Text = string.Format("⏱ {0:0.0} วินาที", secs);
+                }
+            };
+
             ApplyThemeAndSettings(_theme, _settings);
 
             Session = new TerminalSession(shell, startDir, codePage);
+            Session.CommandStarted += OnSessionCommandStarted;
             Session.OutputReceived += OnSessionOutput;
             Session.PromptReady += OnSessionPromptReady;
             Session.ClearRequested += () => Dispatcher.BeginInvoke(new Action(ClearDocumentOnly));
@@ -318,7 +380,7 @@ namespace WindowsTerminalLTSC
             btn.Click += (s, e) =>
             {
                 onClick();
-                InputBox.Focus();
+                FocusInput();
             };
             return btn;
         }
@@ -363,7 +425,9 @@ namespace WindowsTerminalLTSC
 
             InputBarBorder.Background = TerminalTheme.BrushFromHex(theme.TabBarBackground);
             InputBarBorder.BorderBrush = new SolidColorBrush(Color.FromArgb(80, 128, 128, 128));
-            InputBarBorder.Visibility = settings.ShowCommandInputBar ? Visibility.Visible : Visibility.Collapsed;
+            InputBarBorder.Visibility = (_activeTuiSurface == null && settings.ShowCommandInputBar)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
 
             PromptLabel.Foreground = TerminalTheme.BrushFromHex(theme.PromptColor);
             PromptLabel.FontFamily = fontFamily;
@@ -373,6 +437,323 @@ namespace WindowsTerminalLTSC
             InputBox.CaretBrush = TerminalTheme.BrushFromHex(theme.CursorColor);
             InputBox.FontFamily = fontFamily;
             InputBox.FontSize = fontSize;
+
+            if (_activeTuiSurface != null)
+            {
+                _activeTuiSurface.ApplyTheme(theme, settings);
+            }
+        }
+
+        private Border BuildActivityBanner()
+        {
+            var border = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(16, 36, 58)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(0, 120, 212)),
+                BorderThickness = new Thickness(0, 1, 0, 0),
+                Padding = new Thickness(12, 6, 12, 6),
+                Visibility = Visibility.Collapsed
+            };
+
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            _activityIconBlock = new TextBlock
+            {
+                Text = "💡",
+                Foreground = new SolidColorBrush(Color.FromRgb(80, 220, 255)),
+                FontSize = 14,
+                FontWeight = FontWeights.Bold,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 8, 0)
+            };
+            SetColumn(_activityIconBlock, 0);
+            grid.Children.Add(_activityIconBlock);
+
+            _activityTitleBlock = new TextBlock
+            {
+                Text = "",
+                Foreground = Brushes.White,
+                FontSize = 12.5,
+                FontWeight = FontWeights.SemiBold,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis
+            };
+            SetColumn(_activityTitleBlock, 1);
+            grid.Children.Add(_activityTitleBlock);
+
+            // Interactive (Y/N)? Quick Answer Buttons
+            _ynButtonsPanel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center,
+                Visibility = Visibility.Collapsed,
+                Margin = new Thickness(10, 0, 8, 0)
+            };
+
+            _btnYes = CreateInteractiveChoiceButton("✓ ใช่ / อนุญาต (Y)", Color.FromRgb(22, 163, 74), () =>
+                SendInteractiveAnswer(_currentPromptKind == InteractivePromptKind.FullWordYesNo ? "yes" : "Y"));
+            _btnNo = CreateInteractiveChoiceButton("✕ ไม่ / ปฏิเสธ (N)", Color.FromRgb(220, 38, 38), () =>
+                SendInteractiveAnswer(_currentPromptKind == InteractivePromptKind.FullWordYesNo ? "no" : "N"));
+            _btnAll = CreateInteractiveChoiceButton("∀ ใช่ทั้งหมด (A)", Color.FromRgb(37, 99, 235), () => SendInteractiveAnswer("A"));
+            _btnContinue = CreateInteractiveChoiceButton("⏎ กดเพื่อทำต่อ (Enter)", Color.FromRgb(37, 99, 235), () =>
+                SendInteractiveAnswer(_currentPromptKind == InteractivePromptKind.PythonRepl ? "exit()" : ""));
+            _btnElevate = CreateInteractiveChoiceButton("🛡 ขออนุญาต Windows (Yes/No) รันด้วยสิทธิ์ Admin", Color.FromRgb(217, 119, 6), () =>
+            {
+                string retryCmd = _pendingElevationRetryCommand;
+                _pendingElevationRetryCommand = null;
+                _currentPromptKind = InteractivePromptKind.None;
+                ActivityBannerBorder.Visibility = Visibility.Collapsed;
+                SystemIntegration.LaunchAsAdministrator(Session.CurrentDirectory, retryCmd);
+            });
+            _btnDismissElevate = CreateInteractiveChoiceButton("✕ ปิด", Color.FromRgb(75, 85, 99), () =>
+            {
+                _pendingElevationRetryCommand = null;
+                _currentPromptKind = InteractivePromptKind.None;
+                ActivityBannerBorder.Visibility = Visibility.Collapsed;
+            });
+            _btnExitTui = CreateInteractiveChoiceButton("🚪 ออกจากโหมด TUI", Color.FromRgb(220, 38, 38), () =>
+            {
+                RequestGracefulExitActiveTuiSession();
+            });
+
+            _ynButtonsPanel.Children.Add(_btnYes);
+            _ynButtonsPanel.Children.Add(_btnNo);
+            _ynButtonsPanel.Children.Add(_btnAll);
+            _ynButtonsPanel.Children.Add(_btnContinue);
+            _ynButtonsPanel.Children.Add(_btnElevate);
+            _ynButtonsPanel.Children.Add(_btnDismissElevate);
+            _ynButtonsPanel.Children.Add(_btnExitTui);
+            SetColumn(_ynButtonsPanel, 2);
+            grid.Children.Add(_ynButtonsPanel);
+
+            _activityElapsedBlock = new TextBlock
+            {
+                Text = "",
+                Foreground = new SolidColorBrush(Color.FromRgb(180, 210, 245)),
+                FontSize = 11.5,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(8, 0, 0, 0)
+            };
+            SetColumn(_activityElapsedBlock, 3);
+            grid.Children.Add(_activityElapsedBlock);
+
+            border.Child = grid;
+            return border;
+        }
+
+        private Button CreateInteractiveChoiceButton(string label, Color bgColor, Action onClick)
+        {
+            var btn = new Button
+            {
+                Content = label,
+                Margin = new Thickness(4, 0, 0, 0),
+                Padding = new Thickness(12, 3, 12, 3),
+                FontSize = 12,
+                FontWeight = FontWeights.Bold,
+                Foreground = Brushes.White,
+                Background = new SolidColorBrush(bgColor),
+                BorderThickness = new Thickness(0),
+                Cursor = Cursors.Hand
+            };
+            btn.Click += (s, e) =>
+            {
+                onClick();
+                FocusInput();
+            };
+            return btn;
+        }
+
+        private void UpdateTypingHintBanner(string currentInput)
+        {
+            if (_activeTuiSurface != null)
+                return;
+            if (Session != null && Session.IsBusy)
+                return;
+
+            if (string.IsNullOrWhiteSpace(currentInput))
+            {
+                if (!string.IsNullOrEmpty(_pendingElevationRetryCommand))
+                {
+                    ShowElevationRequiredBanner(_pendingElevationRetryCommand);
+                    return;
+                }
+                ActivityBannerBorder.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            _pendingElevationRetryCommand = null;
+            _currentPromptKind = InteractivePromptKind.None;
+
+            string desc = CommandDescriber.DescribeCommand(currentInput, false);
+            if (string.IsNullOrEmpty(desc))
+            {
+                ActivityBannerBorder.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            ActivityBannerBorder.Background = new SolidColorBrush(Color.FromRgb(18, 30, 48));
+            ActivityBannerBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(45, 85, 140));
+            _activityIconBlock.Text = "💡";
+            _activityIconBlock.Foreground = new SolidColorBrush(Color.FromRgb(100, 210, 255));
+            _activityTitleBlock.Text = desc;
+            _activityTitleBlock.Foreground = new SolidColorBrush(Color.FromRgb(210, 225, 245));
+            _ynButtonsPanel.Visibility = Visibility.Collapsed;
+            _activityElapsedBlock.Text = "กด Enter เพื่อรันคำสั่ง";
+            ActivityBannerBorder.Visibility = Visibility.Visible;
+        }
+
+        private void OnSessionCommandStarted(string cmd)
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                _lastExecutedCommand = cmd ?? "";
+                _pendingElevationRetryCommand = null;
+                _cachedLiveDownloadText = null;
+                _spinnerTickCount = 0;
+                _currentPromptKind = InteractivePromptKind.None;
+                _spinnerIndex = 0;
+                string desc = CommandDescriber.DescribeCommand(cmd, true);
+
+                ActivityBannerBorder.Background = new SolidColorBrush(Color.FromRgb(14, 42, 68));
+                ActivityBannerBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(0, 140, 235));
+                _activityIconBlock.Text = SpinnerFrames[0];
+                _activityIconBlock.Foreground = new SolidColorBrush(Color.FromRgb(80, 250, 123));
+                _activityTitleBlock.Text = desc;
+                _activityTitleBlock.Foreground = Brushes.White;
+                _ynButtonsPanel.Visibility = Visibility.Collapsed;
+                _activityElapsedBlock.Text = "⏱ 0.0 วินาที";
+                ActivityBannerBorder.Visibility = Visibility.Visible;
+
+                _activityTimer.Start();
+
+                if (TitleChanged != null)
+                {
+                    string shortCmd = cmd.Length > 18 ? cmd.Substring(0, 18) + "..." : cmd;
+                    TitleChanged("⏳ กำลังรัน: " + shortCmd);
+                }
+            }));
+        }
+
+        private void ShowElevationRequiredBanner(string failedCmd)
+        {
+            _currentPromptKind = InteractivePromptKind.ElevationRequired;
+            ActivityBannerBorder.Background = new SolidColorBrush(Color.FromRgb(64, 28, 12));
+            ActivityBannerBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(245, 158, 11));
+            _activityIconBlock.Text = "🛡";
+            _activityIconBlock.Foreground = new SolidColorBrush(Color.FromRgb(251, 191, 36));
+
+            string shortCmd = !string.IsNullOrEmpty(failedCmd) && failedCmd.Length > 45
+                ? failedCmd.Substring(0, 45) + "..."
+                : failedCmd;
+            _activityTitleBlock.Text = "คำสั่งนี้ต้องใช้สิทธิ์ผู้ดูแลระบบ (Administrator): กดปุ่มด้านขวาเพื่อเปิดหน้าต่างขออนุญาต Windows (Yes/No) แล้วรันคำสั่ง '" + shortCmd + "' อัตโนมัติ";
+            _activityTitleBlock.Foreground = new SolidColorBrush(Color.FromRgb(254, 243, 199));
+
+            _btnYes.Visibility = Visibility.Collapsed;
+            _btnNo.Visibility = Visibility.Collapsed;
+            _btnAll.Visibility = Visibility.Collapsed;
+            _btnContinue.Visibility = Visibility.Collapsed;
+            _btnElevate.Visibility = Visibility.Visible;
+            _btnDismissElevate.Visibility = Visibility.Visible;
+            _btnExitTui.Visibility = Visibility.Collapsed;
+            _activityElapsedBlock.Text = "";
+
+            _ynButtonsPanel.Visibility = Visibility.Visible;
+            ActivityBannerBorder.Visibility = Visibility.Visible;
+        }
+
+        private void ShowInteractivePromptBanner(InteractivePromptKind kind, string promptQuestion)
+        {
+            _currentPromptKind = kind;
+            ActivityBannerBorder.Background = new SolidColorBrush(Color.FromRgb(58, 40, 8));
+            ActivityBannerBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(245, 158, 11));
+            _activityIconBlock.Text = "❓";
+            _activityIconBlock.Foreground = new SolidColorBrush(Color.FromRgb(251, 191, 36));
+            _btnElevate.Visibility = Visibility.Collapsed;
+            _btnDismissElevate.Visibility = Visibility.Collapsed;
+            _btnExitTui.Visibility = Visibility.Collapsed;
+
+            if (kind == InteractivePromptKind.PythonRepl)
+            {
+                _activityIconBlock.Text = "🐍";
+                _activityTitleBlock.Text = "โหมดโต้ตอบ Python (>>>): พิมพ์โค้ด Python แล้วกด Enter หรือกดปุ่มด้านขวาเพื่อออกจาก Python";
+                _btnYes.Visibility = Visibility.Collapsed;
+                _btnNo.Visibility = Visibility.Collapsed;
+                _btnAll.Visibility = Visibility.Collapsed;
+                _btnContinue.Content = "🚪 ออกจาก Python (exit())";
+                _btnContinue.Visibility = Visibility.Visible;
+            }
+            else if (kind == InteractivePromptKind.PressKeyToContinue)
+            {
+                _activityTitleBlock.Text = "โปรแกรมหยุดรอ: กดปุ่ม 'กดเพื่อทำต่อ (Enter)' ด้านขวา หรือกดปุ่ม Enter บนคีย์บอร์ด";
+                _btnYes.Visibility = Visibility.Collapsed;
+                _btnNo.Visibility = Visibility.Collapsed;
+                _btnAll.Visibility = Visibility.Collapsed;
+                _btnContinue.Content = "⏎ กดเพื่อทำต่อ (Enter)";
+                _btnContinue.Visibility = Visibility.Visible;
+            }
+            else if (kind == InteractivePromptKind.FullWordYesNo)
+            {
+                _btnYes.Content = "✓ ใช่ / อนุญาต (yes)";
+                _btnNo.Content = "✕ ไม่ / ปฏิเสธ (no)";
+                _activityTitleBlock.Text = "รอการยืนยัน (yes/no): " + promptQuestion + " — คลิกปุ่มด้านขวาเพื่อตอบได้ทันที";
+                _btnYes.Visibility = Visibility.Visible;
+                _btnNo.Visibility = Visibility.Visible;
+                _btnAll.Visibility = Visibility.Collapsed;
+                _btnContinue.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                _btnYes.Content = "✓ ใช่ / อนุญาต (Y)";
+                _btnNo.Content = "✕ ไม่ / ปฏิเสธ (N)";
+                _activityTitleBlock.Text = "รอการยืนยัน (Y/N): " + promptQuestion + " — คลิกปุ่มด้านขวา หรือพิมพ์ Y / N แล้วกด Enter";
+                _btnYes.Visibility = Visibility.Visible;
+                _btnNo.Visibility = Visibility.Visible;
+                _btnAll.Visibility = (kind == InteractivePromptKind.YesNoAll) ? Visibility.Visible : Visibility.Collapsed;
+                _btnContinue.Visibility = Visibility.Collapsed;
+            }
+
+            _activityTitleBlock.Foreground = new SolidColorBrush(Color.FromRgb(254, 243, 199));
+            _ynButtonsPanel.Visibility = Visibility.Visible;
+            ActivityBannerBorder.Visibility = Visibility.Visible;
+        }
+
+        public void SendInteractiveAnswer(string answer)
+        {
+            if (Session == null) return;
+            _currentPromptKind = InteractivePromptKind.None;
+            _ynButtonsPanel.Visibility = Visibility.Collapsed;
+
+            _syncingInput = true;
+            InputBox.Text = string.Empty;
+            _syncingInput = false;
+
+            RemoveLiveInlineRuns();
+            var ansRun = new Run((string.IsNullOrEmpty(answer) ? "" : answer) + "\r\n")
+            {
+                Foreground = (string.Equals(answer, "N", StringComparison.OrdinalIgnoreCase) ||
+                              string.Equals(answer, "no", StringComparison.OrdinalIgnoreCase))
+                    ? TerminalTheme.BrushFromHex(_theme.ErrorColor)
+                    : TerminalTheme.BrushFromHex(_theme.PromptColor),
+                FontWeight = FontWeights.Bold
+            };
+            _currentParagraph.Inlines.Add(ansRun);
+            AttachLiveInlineRuns();
+            TerminalBox.ScrollToEnd();
+
+            // Restore running banner state while command finishes
+            if (Session.IsBusy)
+            {
+                ActivityBannerBorder.Background = new SolidColorBrush(Color.FromRgb(14, 42, 68));
+                ActivityBannerBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(0, 140, 235));
+                _activityTitleBlock.Text = CommandDescriber.DescribeCommand(Session.CurrentCommand, true);
+                _activityTitleBlock.Foreground = Brushes.White;
+            }
+
+            Session.SendRawInput((answer ?? "") + "\r\n");
         }
 
         private void PrintWelcomeBanner()
@@ -439,6 +820,25 @@ namespace WindowsTerminalLTSC
                     }
                 }
 
+                // Check if the command failed due to missing Administrator privileges (UAC Yes/No needed)
+                if (!SystemIntegration.IsRunningAsAdministrator() &&
+                    !string.IsNullOrWhiteSpace(_lastExecutedCommand) &&
+                    CommandDescriber.DetectElevationError(text))
+                {
+                    _pendingElevationRetryCommand = _lastExecutedCommand;
+                    ShowElevationRequiredBanner(_pendingElevationRetryCommand);
+                }
+                else if (Session.IsBusy)
+                {
+                    // Check if the running command is prompting for (Y/N)?, (yes/no), or Press any key to continue
+                    string promptQuestion;
+                    InteractivePromptKind kind = CommandDescriber.DetectInteractivePrompt(text, out promptQuestion);
+                    if (kind != InteractivePromptKind.None)
+                    {
+                        ShowInteractivePromptBanner(kind, promptQuestion);
+                    }
+                }
+
                 TrimScrollbackBuffer();
                 AttachLiveInlineRuns();
                 TerminalBox.ScrollToEnd();
@@ -447,6 +847,9 @@ namespace WindowsTerminalLTSC
 
         private void TrimScrollbackBuffer()
         {
+            if (_currentParagraph.Inlines.Count <= MaxScrollbackInlines + 200)
+                return;
+
             while (_currentParagraph.Inlines.Count > MaxScrollbackInlines)
             {
                 _currentParagraph.Inlines.Remove(_currentParagraph.Inlines.FirstInline);
@@ -457,6 +860,18 @@ namespace WindowsTerminalLTSC
         {
             Dispatcher.BeginInvoke(new Action(() =>
             {
+                _activityTimer.Stop();
+                if (!string.IsNullOrEmpty(_pendingElevationRetryCommand))
+                {
+                    ShowElevationRequiredBanner(_pendingElevationRetryCommand);
+                }
+                else
+                {
+                    _currentPromptKind = InteractivePromptKind.None;
+                    _ynButtonsPanel.Visibility = Visibility.Collapsed;
+                    UpdateTypingHintBanner(InputBox.Text);
+                }
+
                 RemoveLiveInlineRuns();
                 AppendPrompt(prompt);
                 if (DirectoryChanged != null) DirectoryChanged(currentDir);
@@ -499,7 +914,7 @@ namespace WindowsTerminalLTSC
                 Foreground = TerminalTheme.BrushFromHex(_theme.CommandColor),
                 FontWeight = FontWeights.SemiBold
             };
-            _cursorRun = new Run("█")
+            _cursorRun = new Run("▌")
             {
                 Foreground = TerminalTheme.BrushFromHex(_theme.CursorColor)
             };
@@ -522,7 +937,25 @@ namespace WindowsTerminalLTSC
                 AttachLiveInlineRuns();
             }
             _liveInputRun.Text = text ?? "";
+            if (_cursorRun != null)
+            {
+                if (!string.IsNullOrEmpty(text) && IsThaiCombiningMark(text[text.Length - 1]))
+                {
+                    _cursorRun.Text = " ▌";
+                }
+                else
+                {
+                    _cursorRun.Text = "▌";
+                }
+            }
             TerminalBox.ScrollToEnd();
+        }
+
+        private static bool IsThaiCombiningMark(char ch)
+        {
+            return ch == '\u0E31' ||
+                   (ch >= '\u0E34' && ch <= '\u0E3A') ||
+                   (ch >= '\u0E47' && ch <= '\u0E4E');
         }
 
         private void RemoveCurrentLineForCarriageReturn()
@@ -589,21 +1022,40 @@ namespace WindowsTerminalLTSC
                     _currentParagraph.Inlines.Add(CreateStyledRun(before, fg, seg));
                 }
 
-                string url = m.Value;
-                var linkRun = new Run(url)
+                string rawMatch = m.Value;
+                string url = rawMatch.TrimEnd('.', ',', ';', ')', ']', '}', '\'', '"');
+                string trailingPunct = rawMatch.Substring(url.Length);
+
+                Uri validatedUri;
+                bool validHttpUrl = Uri.TryCreate(url, UriKind.Absolute, out validatedUri) &&
+                    (validatedUri.Scheme == Uri.UriSchemeHttp || validatedUri.Scheme == Uri.UriSchemeHttps);
+
+                if (validHttpUrl)
                 {
-                    Foreground = TerminalTheme.BrushFromHex(_theme.AccentColor),
-                    TextDecorations = TextDecorations.Underline,
-                    Cursor = Cursors.Hand,
-                    ToolTip = "คลิกเพื่อเปิดลิงก์: " + url
-                };
-                string capturedUrl = url;
-                linkRun.MouseLeftButtonDown += (s, e) =>
+                    var linkRun = new Run(url)
+                    {
+                        Foreground = TerminalTheme.BrushFromHex(_theme.AccentColor),
+                        TextDecorations = TextDecorations.Underline,
+                        Cursor = Cursors.Hand,
+                        ToolTip = "คลิกเพื่อเปิดลิงก์: " + url
+                    };
+                    string safeUri = validatedUri.AbsoluteUri;
+                    linkRun.MouseLeftButtonDown += (s, e) =>
+                    {
+                        e.Handled = true;
+                        try { Process.Start(new ProcessStartInfo(safeUri) { UseShellExecute = true }); } catch { }
+                    };
+                    _currentParagraph.Inlines.Add(linkRun);
+                }
+                else
                 {
-                    e.Handled = true;
-                    try { Process.Start(capturedUrl); } catch { }
-                };
-                _currentParagraph.Inlines.Add(linkRun);
+                    _currentParagraph.Inlines.Add(CreateStyledRun(url, fg, seg));
+                }
+
+                if (trailingPunct.Length > 0)
+                {
+                    _currentParagraph.Inlines.Add(CreateStyledRun(trailingPunct, fg, seg));
+                }
 
                 lastIdx = m.Index + m.Length;
             }
@@ -618,10 +1070,10 @@ namespace WindowsTerminalLTSC
         {
             var run = new Run(text)
             {
-                Foreground = new SolidColorBrush(fg)
+                Foreground = TerminalTheme.GetCachedBrush(fg)
             };
             if (seg.Background.HasValue)
-                run.Background = new SolidColorBrush(seg.Background.Value);
+                run.Background = TerminalTheme.GetCachedBrush(seg.Background.Value);
             if (seg.Bold)
                 run.FontWeight = FontWeights.Bold;
             if (seg.Italic)
@@ -715,6 +1167,32 @@ namespace WindowsTerminalLTSC
 
         private void SubmitCurrentCommand()
         {
+            if (_activeTuiSurface != null)
+            {
+                string tuiInput = InputBox.Text;
+                _syncingInput = true;
+                InputBox.Text = string.Empty;
+                _syncingInput = false;
+
+                if (!string.IsNullOrEmpty(tuiInput))
+                    _activeTuiSurface.SendText(tuiInput + "\r");
+                else
+                    _activeTuiSurface.SendKeyEvent(0x0D, '\r', 0);
+
+                _activeTuiSurface.FocusSurface();
+                return;
+            }
+
+            if (_currentPromptKind != InteractivePromptKind.None &&
+                _currentPromptKind != InteractivePromptKind.ElevationRequired)
+            {
+                SendInteractiveAnswer(InputBox.Text);
+                return;
+            }
+
+            _pendingElevationRetryCommand = null;
+            _currentPromptKind = InteractivePromptKind.None;
+
             string cmd = InputBox.Text;
             _syncingInput = true;
             InputBox.Text = string.Empty;
@@ -730,7 +1208,270 @@ namespace WindowsTerminalLTSC
             AttachLiveInlineRuns();
             TerminalBox.ScrollToEnd();
 
+            if (!Session.IsBusy && TuiDetector.ShouldRunInTuiMode(cmd))
+            {
+                StartInteractiveTuiSession(cmd);
+                return;
+            }
+
             Session.ExecuteCommand(cmd);
+        }
+
+        private void StartInteractiveTuiSession(string cmd)
+        {
+            if (_activeTuiSurface != null)
+            {
+                StopActiveTuiSession();
+            }
+
+            string trimmed = cmd.Trim();
+            if (!string.IsNullOrEmpty(trimmed))
+            {
+                if (Session.CommandHistory.Count == 0 || !string.Equals(Session.CommandHistory[Session.CommandHistory.Count - 1], cmd, StringComparison.Ordinal))
+                {
+                    Session.CommandHistory.Add(cmd);
+                }
+                Session.HistoryIndex = Session.CommandHistory.Count;
+            }
+
+            var surface = new TuiSurfaceControl(_theme, _settings);
+            if (StatusMessage != null)
+                surface.StatusToast += StatusMessage;
+
+            surface.TuiExited += exitRes =>
+            {
+                if (_activeTuiSurface == surface)
+                {
+                    FinishTuiSessionUi(trimmed, exitRes);
+                }
+            };
+
+            _activeTuiCommandLine = trimmed;
+            _activeTuiSurface = surface;
+            _cursorTimer.Stop();
+            TerminalBox.Visibility = Visibility.Collapsed;
+            InputBarBorder.Visibility = Visibility.Collapsed;
+            SetRow(surface, 0);
+            Children.Add(surface);
+
+            // Show helpful TUI banner with 1-click Exit button
+            ActivityBannerBorder.Background = new SolidColorBrush(Color.FromRgb(28, 32, 68));
+            ActivityBannerBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(99, 102, 241));
+            _activityIconBlock.Text = "🖥";
+            _activityIconBlock.Foreground = new SolidColorBrush(Color.FromRgb(165, 180, 252));
+            _activityTitleBlock.Text = "โหมดหน้าจอโต้ตอบ (TUI 60FPS): " + trimmed + " — พิมพ์ไทย/อังกฤษได้ทันที (พิมพ์ /exit หรือกด Ctrl+D สองครั้งเพื่อออก)";
+            _activityTitleBlock.Foreground = Brushes.White;
+
+            _btnYes.Visibility = Visibility.Collapsed;
+            _btnNo.Visibility = Visibility.Collapsed;
+            _btnAll.Visibility = Visibility.Collapsed;
+            _btnContinue.Visibility = Visibility.Collapsed;
+            _btnElevate.Visibility = Visibility.Collapsed;
+            _btnDismissElevate.Visibility = Visibility.Collapsed;
+            _btnExitTui.Visibility = Visibility.Visible;
+            _ynButtonsPanel.Visibility = Visibility.Visible;
+            _activityElapsedBlock.Text = "";
+            ActivityBannerBorder.Visibility = Visibility.Visible;
+
+            if (TitleChanged != null)
+                TitleChanged("🖥 TUI: " + (trimmed.Length > 18 ? trimmed.Substring(0, 18) + "..." : trimmed));
+
+            // Force synchronous WPF layout pass AFTER collapsing InputBarBorder and showing ActivityBannerBorder
+            // so initial cols x rows passed to --tui-host match the actual viewport 100% identically!
+            UpdateLayout();
+            short cols;
+            short rows;
+            if (surface.ActualWidth > 100 && surface.ActualHeight > 60)
+            {
+                surface.ComputeViewportGrid(out cols, out rows);
+            }
+            else
+            {
+                surface.ComputeViewportGridForDimensions(ActualWidth, Math.Max(140.0, ActualHeight - 36.0), out cols, out rows);
+            }
+
+            surface.StartTuiCommand(trimmed, Session.CurrentDirectory, cols, rows);
+        }
+
+        public void RequestGracefulExitActiveTuiSession()
+        {
+            if (_activeTuiSurface == null) return;
+            _activeTuiSurface.RequestGracefulExit();
+        }
+
+        public void StopActiveTuiSession()
+        {
+            if (_activeTuiSurface == null) return;
+            var s = _activeTuiSurface;
+            string label = !string.IsNullOrEmpty(_activeTuiCommandLine) ? _activeTuiCommandLine : "TUI";
+            s.StopTui();
+            if (_activeTuiSurface == s)
+            {
+                FinishTuiSessionUi(label, null);
+            }
+        }
+
+        private void FinishTuiSessionUi(string cmdName, TuiExitResult exitResult)
+        {
+            if (_activeTuiSurface != null)
+            {
+                if (Children.Contains(_activeTuiSurface))
+                    Children.Remove(_activeTuiSurface);
+                _activeTuiSurface = null;
+            }
+            _activeTuiCommandLine = "";
+
+            TerminalBox.Visibility = Visibility.Visible;
+            InputBarBorder.Visibility = _settings.ShowCommandInputBar ? Visibility.Visible : Visibility.Collapsed;
+            _btnExitTui.Visibility = Visibility.Collapsed;
+            _ynButtonsPanel.Visibility = Visibility.Collapsed;
+            ActivityBannerBorder.Visibility = Visibility.Collapsed;
+            _cursorTimer.Start();
+
+            RemoveLiveInlineRuns();
+
+            bool isAgy = TuiDetector.IsAgyInteractiveCommand(cmdName);
+            string finalConsoleText = (exitResult != null && !string.IsNullOrWhiteSpace(exitResult.FinalConsoleText))
+                ? exitResult.FinalConsoleText.Trim()
+                : string.Empty;
+
+            string printedUuidFromConsole = null;
+            if (isAgy && !string.IsNullOrEmpty(finalConsoleText))
+            {
+                Match uuidMatch = Regex.Match(
+                    finalConsoleText,
+                    @"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})");
+                if (uuidMatch.Success)
+                {
+                    printedUuidFromConsole = uuidMatch.Groups[1].Value;
+                }
+
+                // Strip plain-text resume lines so we render a single clean clickable resume block below without duplication
+                string[] rawLines = finalConsoleText.Replace("\r\n", "\n").Split('\n');
+                var nonResumeLines = new List<string>();
+                for (int i = 0; i < rawLines.Length; i++)
+                {
+                    string ln = rawLines[i];
+                    if (ln.IndexOf("--conversation", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        ln.IndexOf("agy -c", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        ln.IndexOf("To resume", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        continue;
+                    }
+                    nonResumeLines.Add(ln);
+                }
+                finalConsoleText = string.Join("\r\n", nonResumeLines.ToArray()).Trim();
+            }
+
+            if (!string.IsNullOrEmpty(finalConsoleText))
+            {
+                var segments = _ansiParser.Parse(finalConsoleText + "\r\n");
+                foreach (var seg in segments)
+                {
+                    if (!string.IsNullOrEmpty(seg.Text))
+                    {
+                        AppendSegment(seg);
+                    }
+                }
+            }
+
+            if (isAgy)
+            {
+                DateTime startUtc = (exitResult != null && exitResult.SessionStartUtc != default(DateTime))
+                    ? exitResult.SessionStartUtc
+                    : DateTime.UtcNow.AddMinutes(-1);
+
+                AgyResumeInfo resumeInfo = AgySessionHelper.TryGetLatestCliResumeInfo(cmdName, startUtc);
+                if (!string.IsNullOrEmpty(printedUuidFromConsole))
+                {
+                    if (resumeInfo == null)
+                    {
+                        resumeInfo = new AgyResumeInfo
+                        {
+                            ConversationId = printedUuidFromConsole,
+                            ModifiedDuringSession = true
+                        };
+                    }
+                    else if (!string.Equals(resumeInfo.ConversationId, printedUuidFromConsole, StringComparison.OrdinalIgnoreCase))
+                    {
+                        resumeInfo.ConversationId = printedUuidFromConsole;
+                        resumeInfo.ModifiedDuringSession = true;
+                    }
+                }
+
+                AppendAgyExitResumeSection(resumeInfo);
+            }
+
+            AppendStyledText("[ออกจากโหมดหน้าจอโต้ตอบ " + cmdName + " เรียบร้อยแล้ว]\r\n", TerminalTheme.ParseColor(_theme.PromptColor), false);
+            AppendPrompt(Session.GetPromptString());
+
+            string folderName = Path.GetFileName(Session.CurrentDirectory.TrimEnd('\\', '/'));
+            if (string.IsNullOrEmpty(folderName)) folderName = Session.CurrentDirectory;
+            string prefix = Session.Shell == ShellType.PowerShell ? "PS: " : "cmd: ";
+            if (TitleChanged != null) TitleChanged(prefix + folderName);
+
+            InputBox.Focus();
+        }
+
+        private void AppendAgyExitResumeSection(AgyResumeInfo resumeInfo)
+        {
+            string header = (resumeInfo != null && resumeInfo.ModifiedDuringSession)
+                ? "To resume this conversation, run:\r\n"
+                : "To resume your latest Antigravity CLI conversation, run:\r\n";
+
+            AppendStyledText(header, TerminalTheme.ParseColor(_theme.Foreground), false);
+
+            if (resumeInfo != null && !string.IsNullOrWhiteSpace(resumeInfo.ConversationId))
+            {
+                string fullResumeCmd = "agy --conversation " + resumeInfo.ConversationId;
+                AppendStyledText("  ", TerminalTheme.ParseColor(_theme.Foreground), false);
+                AppendClickableTerminalCommandRun(fullResumeCmd);
+
+                string note = "";
+                if (!string.IsNullOrWhiteSpace(resumeInfo.Title))
+                    note = "   # " + resumeInfo.Title.Trim();
+                else if (!string.IsNullOrWhiteSpace(resumeInfo.Preview))
+                {
+                    string p = resumeInfo.Preview.Trim().Replace("\r", " ").Replace("\n", " ");
+                    if (p.Length > 42) p = p.Substring(0, 42) + "...";
+                    note = "   # \"" + p + "\"";
+                }
+                AppendStyledText(note + "\r\n", Color.FromRgb(140, 155, 175), false);
+            }
+
+            AppendStyledText("  ", TerminalTheme.ParseColor(_theme.Foreground), false);
+            AppendClickableTerminalCommandRun("agy -c");
+            AppendStyledText("   # เปิดแชทล่าสุดต่อทันที (คลิกซ้ายเพื่อรัน หรือคลิกขวาเพื่อคัดลอก)\r\n", Color.FromRgb(140, 155, 175), false);
+        }
+
+        private void AppendClickableTerminalCommandRun(string commandToRun)
+        {
+            var cmdRun = new Run(commandToRun)
+            {
+                Foreground = TerminalTheme.BrushFromHex(_theme.AccentColor),
+                FontWeight = FontWeights.Bold,
+                TextDecorations = TextDecorations.Underline,
+                Cursor = Cursors.Hand,
+                ToolTip = "คลิกซ้ายเพื่อรัน \"" + commandToRun + "\" ทันที | คลิกขวาเพื่อคัดลอกคำสั่ง"
+            };
+            string captured = commandToRun;
+            cmdRun.MouseLeftButtonDown += (s, e) =>
+            {
+                e.Handled = true;
+                RunCommandDirectly(captured);
+            };
+            cmdRun.MouseRightButtonUp += (s, e) =>
+            {
+                e.Handled = true;
+                try
+                {
+                    Clipboard.SetText(captured);
+                    if (StatusMessage != null)
+                        StatusMessage("คัดลอกคำสั่งแล้ว: " + captured);
+                }
+                catch { }
+            };
+            _currentParagraph.Inlines.Add(cmdRun);
         }
 
         public void RunCommandDirectly(string cmd)
@@ -763,6 +1504,39 @@ namespace WindowsTerminalLTSC
             }
         }
 
+        public void PerformInterrupt()
+        {
+            if (_activeTuiSurface != null)
+            {
+                _activeTuiSurface.SendKeyEvent(0x43, '\x03', 0x0008);
+                _activeTuiSurface.FocusSurface();
+                return;
+            }
+
+            _pendingElevationRetryCommand = null;
+            _currentPromptKind = InteractivePromptKind.None;
+            _cachedLiveDownloadText = null;
+
+            string typed = InputBox.Text;
+            _syncingInput = true;
+            InputBox.Text = string.Empty;
+            _syncingInput = false;
+
+            RemoveLiveInlineRuns();
+            if (!string.IsNullOrEmpty(typed))
+            {
+                var typedRun = new Run(typed)
+                {
+                    Foreground = TerminalTheme.BrushFromHex(_theme.CommandColor),
+                    FontWeight = FontWeights.SemiBold
+                };
+                _currentParagraph.Inlines.Add(typedRun);
+            }
+            AttachLiveInlineRuns();
+
+            Session.Interrupt();
+        }
+
         private void TerminalBox_PreviewKeyDown(object sender, KeyEventArgs e)
         {
             if (e.Key == Key.C && (Keyboard.Modifiers & ModifierKeys.Control) != 0 && (Keyboard.Modifiers & ModifierKeys.Shift) == 0)
@@ -772,13 +1546,14 @@ namespace WindowsTerminalLTSC
                     try
                     {
                         Clipboard.SetText(TerminalBox.Selection.Text);
+                        TerminalBox.Selection.Select(TerminalBox.Selection.End, TerminalBox.Selection.End);
                         if (StatusMessage != null) StatusMessage("คัดลอกข้อความแล้ว (Copied)");
                     }
                     catch { }
                 }
                 else
                 {
-                    Session.Interrupt();
+                    PerformInterrupt();
                 }
                 e.Handled = true;
                 return;
@@ -807,15 +1582,25 @@ namespace WindowsTerminalLTSC
             }
             else if (e.Key == Key.C && (Keyboard.Modifiers & ModifierKeys.Control) != 0 && (Keyboard.Modifiers & ModifierKeys.Shift) == 0)
             {
-                if (string.IsNullOrEmpty(InputBox.SelectedText))
+                if (!string.IsNullOrEmpty(InputBox.SelectedText))
+                {
+                    return; // Let standard TextBox copy handle selected input text
+                }
+                if (!TerminalBox.Selection.IsEmpty && !string.IsNullOrEmpty(TerminalBox.Selection.Text))
                 {
                     e.Handled = true;
-                    _syncingInput = true;
-                    InputBox.Text = string.Empty;
-                    _syncingInput = false;
-                    UpdateLiveInlineInput("");
-                    Session.Interrupt();
+                    try
+                    {
+                        Clipboard.SetText(TerminalBox.Selection.Text);
+                        TerminalBox.Selection.Select(TerminalBox.Selection.End, TerminalBox.Selection.End);
+                        if (StatusMessage != null) StatusMessage("คัดลอกข้อความแล้ว (Copied)");
+                    }
+                    catch { }
+                    return;
                 }
+
+                e.Handled = true;
+                PerformInterrupt();
             }
             else if (e.Key == Key.L && (Keyboard.Modifiers & ModifierKeys.Control) != 0)
             {
@@ -863,13 +1648,22 @@ namespace WindowsTerminalLTSC
         {
             Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
             {
-                InputBox.Focus();
+                if (_activeTuiSurface != null)
+                    _activeTuiSurface.FocusSurface();
+                else
+                    InputBox.Focus();
             }));
         }
 
         public void DisposePane()
         {
             _cursorTimer.Stop();
+            _activityTimer.Stop();
+            if (_activeTuiSurface != null)
+            {
+                _activeTuiSurface.StopTui();
+                _activeTuiSurface = null;
+            }
             Session.Dispose();
         }
     }
@@ -897,8 +1691,9 @@ namespace WindowsTerminalLTSC
         private Button _statusEncodingBtn;
         private TextBlock _statusZoomText;
         private TextBlock _statusToastText;
+        private DispatcherTimer _toastTimer;
 
-        public MainWindow(string initialDirectory = null)
+        public MainWindow(string initialDirectory = null, string startupCommand = null)
         {
             _settings = TerminalSettings.Load();
             _themes = TerminalTheme.GetBuiltInThemes();
@@ -935,6 +1730,20 @@ namespace WindowsTerminalLTSC
                 ? initialDirectory
                 : Environment.CurrentDirectory;
             CreateNewTab(initialShell, startDir, _settings.DefaultCodePage);
+
+            if (!string.IsNullOrWhiteSpace(startupCommand))
+            {
+                string pendingCmd = startupCommand;
+                Loaded += (s, e) =>
+                {
+                    if (_activeTab != null && _activeTab.Pane != null && !string.IsNullOrWhiteSpace(pendingCmd))
+                    {
+                        string toRun = pendingCmd;
+                        pendingCmd = null;
+                        _activeTab.Pane.RunCommandDirectly(toRun);
+                    }
+                };
+            }
 
             PreviewKeyDown += MainWindow_PreviewKeyDown;
             PreviewMouseWheel += MainWindow_PreviewMouseWheel;
@@ -1325,6 +2134,7 @@ namespace WindowsTerminalLTSC
                 SystemIntegration.LaunchAsAdministrator(dir);
             });
             var thaiDemoBtn = CreateStatusBarButton("🇹🇭 ทดสอบภาษาไทย", "รันคำสั่งทดสอบภาษาไทยอัตโนมัติ", RunThaiTestCommand);
+            var ynDemoBtn = CreateStatusBarButton("❓ ทดสอบ (Y/N)?", "ทดสอบระบบถามยืนยัน (Y/N)? พร้อมปุ่มกดเลือกตอบ", RunYesNoTestCommand);
             var splitBtn = CreateStatusBarButton("◫ แบ่งหน้าจอ", "เปิด/ปิดการแบ่งหน้าจอ 2 ฝั่ง (Alt+Shift+D)", ToggleSplitPane);
 
             _statusEncodingBtn = CreateStatusBarButton("UTF-8 (65001)", "คลิกเพื่อสลับรหัสภาษา UTF-8 (65001) / Thai TIS-620 (874)", ToggleEncoding);
@@ -1343,6 +2153,7 @@ namespace WindowsTerminalLTSC
 
             rightStack.Children.Add(adminBtn);
             rightStack.Children.Add(thaiDemoBtn);
+            rightStack.Children.Add(ynDemoBtn);
             rightStack.Children.Add(splitBtn);
             rightStack.Children.Add(_statusEncodingBtn);
             rightStack.Children.Add(zoomOutBtn);
@@ -1713,19 +2524,38 @@ namespace WindowsTerminalLTSC
             }
         }
 
+        private void RunYesNoTestCommand()
+        {
+            if (_activeTab == null) return;
+            if (_activeTab.Shell == ShellType.CommandPrompt)
+            {
+                _activeTab.Pane.RunCommandDirectly("mkdir โฟลเดอร์ทดสอบ_YN 2>nul & rmdir /s โฟลเดอร์ทดสอบ_YN");
+            }
+            else
+            {
+                _activeTab.Pane.RunCommandDirectly("$ans = Read-Host 'ต้องการดำเนินการต่อหรือไม่ (Y/N)?'; Write-Host ('คุณเลือกตอบ: ' + $ans) -ForegroundColor Green");
+            }
+        }
+
         private void ShowToast(string message)
         {
             Dispatcher.BeginInvoke(new Action(() =>
             {
                 _statusToastText.Text = message;
-                var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3.4) };
-                timer.Tick += (s, e) =>
+                if (_toastTimer == null)
                 {
-                    timer.Stop();
-                    if (_statusToastText.Text == message)
+                    _toastTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3.4) };
+                    _toastTimer.Tick += (s, e) =>
+                    {
+                        _toastTimer.Stop();
                         _statusToastText.Text = "";
-                };
-                timer.Start();
+                    };
+                }
+                else
+                {
+                    _toastTimer.Stop();
+                }
+                _toastTimer.Start();
             }));
         }
 
@@ -2134,7 +2964,7 @@ namespace WindowsTerminalLTSC
                 ShellType shell = _activeTab != null ? _activeTab.Shell : ShellType.CommandPrompt;
                 CreateNewTab(shell, dir, _settings.DefaultCodePage);
             }
-            else if (ctrl && e.Key == Key.W)
+            else if (ctrl && e.Key == Key.W && (shift || _activeTab == null || !_activeTab.Pane.IsInTuiMode))
             {
                 e.Handled = true;
                 if (_activeTab != null) CloseTab(_activeTab);

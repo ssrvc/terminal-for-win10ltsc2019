@@ -26,6 +26,7 @@ namespace WindowsTerminalLTSC
         private bool _underline = false;
         private bool _inverse = false;
         private TerminalTheme _theme;
+        private string _escapeCarry = string.Empty;
 
         public AnsiParser(TerminalTheme theme)
         {
@@ -53,6 +54,13 @@ namespace WindowsTerminalLTSC
             if (string.IsNullOrEmpty(input))
                 return segments;
 
+            if (!string.IsNullOrEmpty(_escapeCarry))
+            {
+                if (_escapeCarry.Length <= 512)
+                    input = _escapeCarry + input;
+                _escapeCarry = string.Empty;
+            }
+
             var sb = new StringBuilder();
             int i = 0;
             int len = input.Length;
@@ -71,26 +79,41 @@ namespace WindowsTerminalLTSC
                 }
 
                 // ESC sequence
-                if (c == '\x1B' && i + 1 < len)
+                if (c == '\x1B')
                 {
+                    if (i + 1 >= len)
+                    {
+                        FlushCurrentText(segments, sb);
+                        _escapeCarry = "\x1B";
+                        break;
+                    }
+
                     char next = input[i + 1];
 
                     // CSI sequence: ESC [
                     if (next == '[')
                     {
                         FlushCurrentText(segments, sb);
-                        i += 2;
-                        int startParams = i;
-                        while (i < len && !((input[i] >= '@' && input[i] <= '~')))
+                        int j = i + 2;
+                        while (j < len && !((input[j] >= '@' && input[j] <= '~')))
                         {
-                            i++;
+                            j++;
                         }
-                        if (i < len)
+                        if (j < len)
                         {
-                            char cmd = input[i];
-                            string paramStr = input.Substring(startParams, i - startParams);
-                            i++;
+                            char cmd = input[j];
+                            string paramStr = input.Substring(i + 2, j - (i + 2));
+                            i = j + 1;
                             HandleCsi(cmd, paramStr, segments);
+                        }
+                        else
+                        {
+                            if (len - i <= 256)
+                            {
+                                _escapeCarry = input.Substring(i);
+                                break;
+                            }
+                            i += 2;
                         }
                         continue;
                     }
@@ -98,22 +121,50 @@ namespace WindowsTerminalLTSC
                     else if (next == ']')
                     {
                         FlushCurrentText(segments, sb);
+                        int j = i + 2;
+                        while (j < len && input[j] != '\x07' && !(input[j] == '\x1B' && j + 1 < len && input[j + 1] == '\\'))
+                        {
+                            j++;
+                        }
+                        if (j < len)
+                        {
+                            string oscContent = input.Substring(i + 2, j - (i + 2));
+                            if (input[j] == '\x07') i = j + 1;
+                            else i = j + 2;
+
+                            if (oscContent.StartsWith("0;") || oscContent.StartsWith("2;"))
+                            {
+                                segments.Add(new AnsiSegment { WindowTitle = oscContent.Substring(2) });
+                            }
+                        }
+                        else
+                        {
+                            // Hold incomplete OSC sequence (or trailing ESC before '\') for next stream chunk
+                            if (len - i <= 512)
+                            {
+                                _escapeCarry = input.Substring(i);
+                                break;
+                            }
+                            i += 2;
+                        }
+                        continue;
+                    }
+                    // VT100 charset designation ESC ( X or ESC ) X
+                    else if (next == '(' || next == ')')
+                    {
+                        if (i + 2 >= len)
+                        {
+                            FlushCurrentText(segments, sb);
+                            _escapeCarry = input.Substring(i);
+                            break;
+                        }
+                        i += 3;
+                        continue;
+                    }
+                    // Single-character VT keypad/reset escapes (ESC =, ESC >, ESC M, ESC c)
+                    else if (next == '=' || next == '>' || next == 'M' || next == '7' || next == '8')
+                    {
                         i += 2;
-                        int startOsc = i;
-                        while (i < len && input[i] != '\x07' && !(input[i] == '\x1B' && i + 1 < len && input[i + 1] == '\\'))
-                        {
-                            i++;
-                        }
-                        string oscContent = input.Substring(startOsc, i - startOsc);
-                        if (i < len)
-                        {
-                            if (input[i] == '\x07') i++;
-                            else if (input[i] == '\x1B') i += 2;
-                        }
-                        if (oscContent.StartsWith("0;") || oscContent.StartsWith("2;"))
-                        {
-                            segments.Add(new AnsiSegment { WindowTitle = oscContent.Substring(2) });
-                        }
                         continue;
                     }
                 }

@@ -1,0 +1,11 @@
+# User runtime data (do not commit personal history or local hooks)
+history.txt
+settings.json
+wt_cmd_hook.cmd
+wt.cmd
+*.log
+*.tmp
+test_*.exe
+*.pdb
+scratch/
+push_to_github.cmd

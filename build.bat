@@ -14,7 +14,7 @@ if exist "%~dp0app.ico" set "ICON_ARG=/win32icon:%~dp0app.ico"
     /r:"System.Drawing.dll" ^
     /r:"System.Windows.Forms.dll" ^
     /r:"System.Web.Extensions.dll" ^
-    "%~dp0src\AssemblyInfo.cs" "%~dp0src\Program.cs" "%~dp0src\AnsiParser.cs" "%~dp0src\TerminalSession.cs" "%~dp0src\TerminalTheme.cs" "%~dp0src\SystemIntegration.cs" "%~dp0src\MainWindow.cs"
+    "%~dp0src\AssemblyInfo.cs" "%~dp0src\Program.cs" "%~dp0src\AnsiParser.cs" "%~dp0src\CommandDescriber.cs" "%~dp0src\TerminalSession.cs" "%~dp0src\TerminalTheme.cs" "%~dp0src\SystemIntegration.cs" "%~dp0src\TuiSessionHost.cs" "%~dp0src\MainWindow.cs"
 
 if %ERRORLEVEL% NEQ 0 (
     echo Build WindowsTerminalLTSC.exe failed!

@@ -150,41 +150,40 @@ namespace WindowsTerminalLTSCSetup
             string pngPath = Path.Combine(installDir, "app.png");
             string uninstallerPath = Path.Combine(installDir, "Uninstall-WindowsTerminalLTSC.exe");
 
+            // Purge obsolete legacy folder from previous versions if present
+            try
+            {
+                string oldLegacyDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WindowsTerminalLTSC");
+                if (Directory.Exists(oldLegacyDir))
+                {
+                    Directory.Delete(oldLegacyDir, true);
+                }
+            }
+            catch { }
+
+            // Purge legacy standalone uninstaller if present (uninstallation is now handled directly by WindowsTerminalLTSC.exe --uninstall)
+            if (File.Exists(uninstallerPath))
+            {
+                try { File.Delete(uninstallerPath); } catch { }
+            }
+
             if (progressCallback != null) progressCallback(30, "กำลังแตกไฟล์โปรแกรม WindowsTerminalLTSC.exe และไอคอน...");
 
             ExtractResourceToFile("WindowsTerminalLTSC.exe", exePath);
             ExtractResourceToFile("app.ico", icoPath);
             ExtractResourceToFile("app.png", pngPath);
 
-            // Copy setup executable as Uninstaller
-            try
-            {
-                string selfExe = Process.GetCurrentProcess().MainModule.FileName;
-                if (!string.Equals(selfExe, uninstallerPath, StringComparison.OrdinalIgnoreCase))
-                {
-                    File.Copy(selfExe, uninstallerPath, true);
-                }
-            }
-            catch { }
-
             if (progressCallback != null) progressCallback(55, "กำลังตั้งค่าการเชื่อมต่อกับ Windows Explorer และคำสั่งลัด...");
 
-            // Clean old registrations first
+            // Clean old integrations and ensure any legacy AutoRun / cmd.exe hijacks are removed
             UnregisterAllIntegrationsOnly();
 
             // Write helper scripts
             string wtCmd = Path.Combine(installDir, "wt.cmd");
             File.WriteAllText(wtCmd, "@echo off\r\nstart \"\" \"" + exePath + "\" \"%CD%\"\r\n", Encoding.ASCII);
 
-            string hookCmd = Path.Combine(installDir, "wt_cmd_hook.cmd");
-            var hookBuilder = new StringBuilder();
-            hookBuilder.AppendLine("@if defined WT_LTSC_SESSION exit /b 0");
-            hookBuilder.AppendLine("@if not \"%CMDCMDLINE:/=%\"==\"%CMDCMDLINE%\" exit /b 0");
-            hookBuilder.AppendLine("@if not \"%CMDCMDLINE:-=%\"==\"%CMDCMDLINE%\" exit /b 0");
-            hookBuilder.AppendLine("@set WT_LTSC_SESSION=1");
-            hookBuilder.AppendLine("@start \"\" \"" + exePath + "\" \"%CD%\"");
-            hookBuilder.AppendLine("@exit");
-            File.WriteAllText(hookCmd, hookBuilder.ToString(), Encoding.ASCII);
+            string oldHookCmd = Path.Combine(installDir, "wt_cmd_hook.cmd");
+            if (File.Exists(oldHookCmd)) { try { File.Delete(oldHookCmd); } catch { } }
 
             if (registerWtCommand)
             {
@@ -217,26 +216,6 @@ namespace WindowsTerminalLTSCSetup
                 catch { }
             }
 
-            if (replaceFolderCmd)
-            {
-                using (var cmdAppKey = Registry.CurrentUser.CreateSubKey(AppPathsBaseKey + @"\cmd.exe"))
-                {
-                    if (cmdAppKey != null)
-                    {
-                        cmdAppKey.SetValue("", exePath, RegistryValueKind.String);
-                        cmdAppKey.SetValue("Path", installDir, RegistryValueKind.String);
-                    }
-                }
-
-                using (var cpKey = Registry.CurrentUser.CreateSubKey(CmdProcessorKeyPath))
-                {
-                    if (cpKey != null)
-                    {
-                        cpKey.SetValue("AutoRun", "\"" + hookCmd + "\"", RegistryValueKind.String);
-                    }
-                }
-            }
-
             if (addExplorerRightClick)
             {
                 string iconSpec = "\"" + icoPath + "\"";
@@ -247,16 +226,17 @@ namespace WindowsTerminalLTSCSetup
 
             if (progressCallback != null) progressCallback(80, "กำลังสร้างไอคอนทางลัด (Shortcuts) และลงทะเบียนระบบ...");
 
+            string userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             if (createDesktopShortcut)
             {
                 string desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-                CreateShortcut(Path.Combine(desktopDir, "Windows Terminal LTSC 2019.lnk"), exePath, installDir, icoPath);
+                CreateShortcut(Path.Combine(desktopDir, "Windows Terminal LTSC 2019.lnk"), exePath, userHome, icoPath);
             }
 
             if (createStartMenuShortcut)
             {
                 string startMenuDir = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
-                CreateShortcut(Path.Combine(startMenuDir, "Windows Terminal LTSC 2019.lnk"), exePath, installDir, icoPath);
+                CreateShortcut(Path.Combine(startMenuDir, "Windows Terminal LTSC 2019.lnk"), exePath, userHome, icoPath);
             }
 
             // Register in Windows Apps & Features (Add/Remove Programs)
@@ -269,7 +249,8 @@ namespace WindowsTerminalLTSCSetup
                     uninstKey.SetValue("DisplayVersion", "2.0.17763", RegistryValueKind.String);
                     uninstKey.SetValue("Publisher", "Rachata (Free Non-Commercial Open Source)", RegistryValueKind.String);
                     uninstKey.SetValue("InstallLocation", installDir, RegistryValueKind.String);
-                    uninstKey.SetValue("UninstallString", "\"" + uninstallerPath + "\" --uninstall", RegistryValueKind.String);
+                    uninstKey.SetValue("UninstallString", "\"" + exePath + "\" --uninstall", RegistryValueKind.String);
+                    uninstKey.SetValue("QuietUninstallString", "\"" + exePath + "\" --uninstall --silent", RegistryValueKind.String);
                     uninstKey.SetValue("NoModify", 1, RegistryValueKind.DWord);
                     uninstKey.SetValue("NoRepair", 1, RegistryValueKind.DWord);
                 }
@@ -682,7 +663,6 @@ namespace WindowsTerminalLTSCSetup
                 "เริ่มใช้งานเทอร์มินัลภาษาไทยทันทีเมื่อการติดตั้งเสร็จสมบูรณ์",
                 true);
 
-            optionsStack.Children.Add(_chkReplaceCmd);
             optionsStack.Children.Add(_chkRegisterWt);
             optionsStack.Children.Add(_chkRightClickMenu);
             optionsStack.Children.Add(_chkDesktopShortcut);

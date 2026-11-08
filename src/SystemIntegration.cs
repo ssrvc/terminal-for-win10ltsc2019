@@ -6,9 +6,11 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Reflection;
+using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
+using System.Windows;
 using Microsoft.Win32;
 
 namespace WindowsTerminalLTSC
@@ -44,11 +46,24 @@ namespace WindowsTerminalLTSC
         private const string ContextMenuKeyName = "WindowsTerminalLTSC";
         private const string CmdProcessorKeyPath = @"Software\Microsoft\Command Processor";
         private const string AppPathsBaseKey = @"Software\Microsoft\Windows\CurrentVersion\App Paths";
+        private const string UninstallRegKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\WindowsTerminalLTSC";
 
         public static string GetInstallDirectory()
         {
+            try
+            {
+                using (var k = Registry.CurrentUser.OpenSubKey(UninstallRegKeyPath))
+                {
+                    if (k != null)
+                    {
+                        string loc = k.GetValue("InstallLocation") as string;
+                        if (!string.IsNullOrEmpty(loc)) return loc;
+                    }
+                }
+            }
+            catch { }
             string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            return Path.Combine(localAppData, "WindowsTerminalLTSC");
+            return Path.Combine(localAppData, "Programs", "WindowsTerminalLTSC");
         }
 
         public static string GetActiveInstallDir()
@@ -63,6 +78,89 @@ namespace WindowsTerminalLTSC
         public static string GetExecutablePath()
         {
             return Path.Combine(GetActiveInstallDir(), "WindowsTerminalLTSC.exe");
+        }
+
+        private static string _cachedPrivateTempDir;
+        private static readonly object _privateTempLock = new object();
+
+        public static string GenerateSecureHexToken(int byteCount = 16)
+        {
+            byte[] buf = new byte[Math.Max(4, byteCount)];
+            using (var rng = new RNGCryptoServiceProvider())
+            {
+                rng.GetBytes(buf);
+            }
+            var sb = new StringBuilder(buf.Length * 2);
+            for (int i = 0; i < buf.Length; i++)
+            {
+                sb.Append(buf[i].ToString("x2"));
+            }
+            return sb.ToString();
+        }
+
+        public static string GetPrivateTempDirectory()
+        {
+            lock (_privateTempLock)
+            {
+                if (!string.IsNullOrEmpty(_cachedPrivateTempDir) && Directory.Exists(_cachedPrivateTempDir))
+                    return _cachedPrivateTempDir;
+
+                string baseDir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "Programs", "WindowsTerminalLTSC", ".tmp");
+
+                try
+                {
+                    if (!Directory.Exists(baseDir))
+                    {
+                        var dirSec = new DirectorySecurity();
+                        dirSec.SetAccessRuleProtection(true, false);
+                        SecurityIdentifier userSid = WindowsIdentity.GetCurrent().User;
+                        if (userSid != null)
+                        {
+                            dirSec.AddAccessRule(new FileSystemAccessRule(
+                                userSid,
+                                FileSystemRights.FullControl,
+                                InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
+                                PropagationFlags.None,
+                                AccessControlType.Allow));
+                        }
+                        dirSec.AddAccessRule(new FileSystemAccessRule(
+                            new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
+                            FileSystemRights.FullControl,
+                            InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
+                            PropagationFlags.None,
+                            AccessControlType.Allow));
+                        dirSec.AddAccessRule(new FileSystemAccessRule(
+                            new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
+                            FileSystemRights.FullControl,
+                            InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
+                            PropagationFlags.None,
+                            AccessControlType.Allow));
+
+                        Directory.CreateDirectory(baseDir, dirSec);
+                    }
+
+                    // Best-effort cleanup of stale temporary scripts older than 12 hours
+                    DateTime cutoff = DateTime.UtcNow.AddHours(-12);
+                    foreach (string f in Directory.GetFiles(baseDir, "wt_*.cmd"))
+                    {
+                        try
+                        {
+                            if (File.GetLastWriteTimeUtc(f) < cutoff)
+                                File.Delete(f);
+                        }
+                        catch { }
+                    }
+
+                    _cachedPrivateTempDir = baseDir;
+                    return baseDir;
+                }
+                catch
+                {
+                    return Path.GetTempPath();
+                }
+            }
         }
 
         public static string GetIconPath()
@@ -90,7 +188,7 @@ namespace WindowsTerminalLTSC
             }
         }
 
-        public static void LaunchAsAdministrator(string workingDirectory)
+        public static void LaunchAsAdministrator(string workingDirectory, string autoRunCommand = null)
         {
             try
             {
@@ -98,19 +196,28 @@ namespace WindowsTerminalLTSC
                 if (!File.Exists(exePath))
                     exePath = GetExecutablePath();
 
+                string targetDir = workingDirectory ?? Environment.CurrentDirectory;
+                string dirB64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(targetDir));
+                string args = "--elevated-b64 " + dirB64;
+                if (!string.IsNullOrWhiteSpace(autoRunCommand))
+                {
+                    string cmdB64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(autoRunCommand));
+                    args += " " + cmdB64;
+                }
+
                 var psi = new ProcessStartInfo
                 {
                     FileName = exePath,
-                    Arguments = "\"" + (workingDirectory ?? Environment.CurrentDirectory) + "\"",
+                    Arguments = args,
                     Verb = "runas",
                     UseShellExecute = true,
-                    WorkingDirectory = workingDirectory ?? Environment.CurrentDirectory
+                    WorkingDirectory = targetDir
                 };
                 Process.Start(psi);
             }
             catch
             {
-                // User cancelled UAC prompt
+                // User clicked No / cancelled UAC prompt
             }
         }
 
@@ -177,7 +284,27 @@ namespace WindowsTerminalLTSC
             string icoPath = Path.Combine(installDir, "app.ico");
             string iconSpec = File.Exists(icoPath) ? ("\"" + icoPath + "\"") : ("\"" + exePath + "\",0");
 
-            // Also write helper scripts to both current dir and installDir
+            // Ensure clean system state: remove any legacy Command Processor AutoRun or cmd.exe hijack
+            // to guarantee 100% clean security reputation with Malwarebytes and Windows Defender.
+            PurgeLegacyDirectories();
+            try
+            {
+                using (var cpKey = Registry.CurrentUser.OpenSubKey(CmdProcessorKeyPath, true))
+                {
+                    if (cpKey != null)
+                    {
+                        string autoRun = cpKey.GetValue("AutoRun") as string;
+                        if (!string.IsNullOrEmpty(autoRun) && autoRun.IndexOf("wt_cmd_hook.cmd", StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            cpKey.DeleteValue("AutoRun", false);
+                        }
+                    }
+                }
+                Registry.CurrentUser.DeleteSubKeyTree(AppPathsBaseKey + @"\cmd.exe", false);
+            }
+            catch { }
+
+            // Write wt.cmd launcher helper script
             string[] dirs = new[] { installDir, AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\', '/') };
             foreach (string d in dirs)
             {
@@ -187,20 +314,11 @@ namespace WindowsTerminalLTSC
                     string wtCmd = Path.Combine(d, "wt.cmd");
                     File.WriteAllText(wtCmd, "@echo off\r\nstart \"\" \"" + exePath + "\" \"%CD%\"\r\n", Encoding.ASCII);
 
-                    string hookCmd = Path.Combine(d, "wt_cmd_hook.cmd");
-                    var hookBuilder = new StringBuilder();
-                    hookBuilder.AppendLine("@if defined WT_LTSC_SESSION exit /b 0");
-                    hookBuilder.AppendLine("@if not \"%CMDCMDLINE:/=%\"==\"%CMDCMDLINE%\" exit /b 0");
-                    hookBuilder.AppendLine("@if not \"%CMDCMDLINE:-=%\"==\"%CMDCMDLINE%\" exit /b 0");
-                    hookBuilder.AppendLine("@set WT_LTSC_SESSION=1");
-                    hookBuilder.AppendLine("@start \"\" \"" + exePath + "\" \"%CD%\"");
-                    hookBuilder.AppendLine("@exit");
-                    File.WriteAllText(hookCmd, hookBuilder.ToString(), Encoding.ASCII);
+                    string oldHook = Path.Combine(d, "wt_cmd_hook.cmd");
+                    if (File.Exists(oldHook)) { try { File.Delete(oldHook); } catch { } }
                 }
                 catch { }
             }
-
-            string activeHookPath = Path.Combine(installDir, "wt_cmd_hook.cmd");
 
             // Register "wt.exe" in HKCU App Paths
             using (var wtKey = Registry.CurrentUser.CreateSubKey(AppPathsBaseKey + @"\wt.exe"))
@@ -231,26 +349,6 @@ namespace WindowsTerminalLTSC
                 }
             }
             catch { }
-
-            if (interceptPlainCmd)
-            {
-                using (var cmdAppKey = Registry.CurrentUser.CreateSubKey(AppPathsBaseKey + @"\cmd.exe"))
-                {
-                    if (cmdAppKey != null)
-                    {
-                        cmdAppKey.SetValue("", exePath, RegistryValueKind.String);
-                        cmdAppKey.SetValue("Path", installDir, RegistryValueKind.String);
-                    }
-                }
-
-                using (var cpKey = Registry.CurrentUser.CreateSubKey(CmdProcessorKeyPath))
-                {
-                    if (cpKey != null)
-                    {
-                        cpKey.SetValue("AutoRun", "\"" + activeHookPath + "\"", RegistryValueKind.String);
-                    }
-                }
-            }
 
             // Register File Explorer Right-Click Context Menus with custom icon
             RegisterExplorerMenu(@"Software\Classes\Directory\Background\shell\" + ContextMenuKeyName, exePath, iconSpec, "\"%V\"");
@@ -285,6 +383,93 @@ namespace WindowsTerminalLTSC
             }
         }
 
+        public static void PurgeLegacyDirectories()
+        {
+            try
+            {
+                string oldLegacyDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WindowsTerminalLTSC");
+                if (Directory.Exists(oldLegacyDir))
+                {
+                    try { Directory.Delete(oldLegacyDir, true); } catch { }
+                }
+                string uninstExe = Path.Combine(GetInstallDirectory(), "Uninstall-WindowsTerminalLTSC.exe");
+                if (File.Exists(uninstExe))
+                {
+                    try { File.Delete(uninstExe); } catch { }
+                }
+            }
+            catch { }
+        }
+
+        public static int PerformFullUninstall(bool silent)
+        {
+            if (!silent)
+            {
+                var res = MessageBox.Show(
+                    "คุณต้องการถอนการติดตั้ง Windows Terminal LTSC 2019 ออกจากระบบหรือไม่?",
+                    "ถอนการติดตั้ง Windows Terminal LTSC",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+                if (res != MessageBoxResult.Yes)
+                    return 0;
+            }
+
+            try
+            {
+                foreach (var proc in Process.GetProcessesByName("WindowsTerminalLTSC"))
+                {
+                    if (proc.Id != Process.GetCurrentProcess().Id)
+                    {
+                        try { proc.Kill(); proc.WaitForExit(1500); } catch { }
+                    }
+                }
+            }
+            catch { }
+
+            UnregisterDefaultTerminal();
+
+            try
+            {
+                Registry.CurrentUser.DeleteSubKeyTree(UninstallRegKeyPath, false);
+            }
+            catch { }
+
+            try
+            {
+                string desktopLnk = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Windows Terminal LTSC 2019.lnk");
+                string startLnk = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Windows Terminal LTSC 2019.lnk");
+                if (File.Exists(desktopLnk)) File.Delete(desktopLnk);
+                if (File.Exists(startLnk)) File.Delete(startLnk);
+            }
+            catch { }
+
+            PurgeLegacyDirectories();
+
+            string installDir = GetInstallDirectory();
+            try
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    Arguments = "/c choice /C Y /N /D Y /T 2 > nul & rmdir /s /q \"" + installDir + "\"",
+                    CreateNoWindow = true,
+                    WindowStyle = ProcessWindowStyle.Hidden
+                });
+            }
+            catch { }
+
+            if (!silent)
+            {
+                MessageBox.Show(
+                    "ถอนการติดตั้ง Windows Terminal LTSC เรียบร้อยแล้ว",
+                    "ถอนการติดตั้งสำเร็จ",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
+
+            return 0;
+        }
+
         private static void RegisterExplorerMenu(string subKeyPath, string exePath, string iconSpec, string argToken)
         {
             using (var shellKey = Registry.CurrentUser.CreateSubKey(subKeyPath))
@@ -315,11 +500,12 @@ namespace WindowsTerminalLTSC
                 if (!File.Exists(icoPath))
                     icoPath = exePath;
 
+                string userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
                 string desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
                 string startMenuDir = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
 
-                CreateSingleShortcut(Path.Combine(desktopDir, "Windows Terminal LTSC 2019.lnk"), exePath, installDir, icoPath);
-                CreateSingleShortcut(Path.Combine(startMenuDir, "Windows Terminal LTSC 2019.lnk"), exePath, installDir, icoPath);
+                CreateSingleShortcut(Path.Combine(desktopDir, "Windows Terminal LTSC 2019.lnk"), exePath, userHome, icoPath);
+                CreateSingleShortcut(Path.Combine(startMenuDir, "Windows Terminal LTSC 2019.lnk"), exePath, userHome, icoPath);
             }
             catch
             {

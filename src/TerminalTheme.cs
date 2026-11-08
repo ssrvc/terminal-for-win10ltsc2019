@@ -24,23 +24,63 @@ namespace WindowsTerminalLTSC
         public string ErrorColor { get; set; }
         public string[] AnsiColors { get; set; } // 16 standard + bright colors
 
+        private static readonly Dictionary<string, Color> _hexColorCache = new Dictionary<string, Color>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<uint, SolidColorBrush> _argbBrushCache = new Dictionary<uint, SolidColorBrush>();
+        private static readonly object _cacheLock = new object();
+
         public static Color ParseColor(string hex)
         {
+            if (string.IsNullOrEmpty(hex))
+                return Colors.White;
+
+            lock (_cacheLock)
+            {
+                Color cached;
+                if (_hexColorCache.TryGetValue(hex, out cached))
+                    return cached;
+            }
+
+            Color parsed;
             try
             {
-                return (Color)ColorConverter.ConvertFromString(hex);
+                parsed = (Color)ColorConverter.ConvertFromString(hex);
             }
             catch
             {
-                return Colors.White;
+                parsed = Colors.White;
+            }
+
+            lock (_cacheLock)
+            {
+                if (_hexColorCache.Count > 512)
+                    _hexColorCache.Clear();
+                _hexColorCache[hex] = parsed;
+            }
+            return parsed;
+        }
+
+        public static SolidColorBrush GetCachedBrush(Color color)
+        {
+            uint key = ((uint)color.A << 24) | ((uint)color.R << 16) | ((uint)color.G << 8) | color.B;
+            lock (_cacheLock)
+            {
+                SolidColorBrush existing;
+                if (_argbBrushCache.TryGetValue(key, out existing))
+                    return existing;
+
+                if (_argbBrushCache.Count > 2048)
+                    _argbBrushCache.Clear();
+
+                var created = new SolidColorBrush(color);
+                created.Freeze();
+                _argbBrushCache[key] = created;
+                return created;
             }
         }
 
         public static SolidColorBrush BrushFromHex(string hex)
         {
-            var brush = new SolidColorBrush(ParseColor(hex));
-            brush.Freeze();
-            return brush;
+            return GetCachedBrush(ParseColor(hex));
         }
 
         public static List<TerminalTheme> GetBuiltInThemes()
@@ -202,7 +242,7 @@ namespace WindowsTerminalLTSC
         public TerminalSettings()
         {
             ThemeName = "Campbell";
-            FontFamily = "Consolas, Leelawadee UI, Tahoma, Segoe UI";
+            FontFamily = "Consolas, Leelawadee UI, Tahoma, Segoe UI, Segoe UI Emoji, Segoe UI Symbol";
             FontSize = 15.0;
             WindowOpacity = 0.98;
             DefaultShell = "cmd";
@@ -229,7 +269,10 @@ namespace WindowsTerminalLTSC
                     if (loaded != null)
                     {
                         if (string.IsNullOrEmpty(loaded.ThemeName)) loaded.ThemeName = "Campbell";
-                        if (string.IsNullOrEmpty(loaded.FontFamily)) loaded.FontFamily = "Consolas, Leelawadee UI, Tahoma, Segoe UI";
+                        if (string.IsNullOrEmpty(loaded.FontFamily))
+                            loaded.FontFamily = "Consolas, Leelawadee UI, Tahoma, Segoe UI, Segoe UI Emoji, Segoe UI Symbol";
+                        else if (loaded.FontFamily.IndexOf("Segoe UI Emoji", StringComparison.OrdinalIgnoreCase) < 0)
+                            loaded.FontFamily = loaded.FontFamily + ", Segoe UI Emoji, Segoe UI Symbol";
                         if (loaded.FontSize < 9 || loaded.FontSize > 42) loaded.FontSize = 15.0;
                         if (loaded.WindowOpacity < 0.75 || loaded.WindowOpacity > 1.0) loaded.WindowOpacity = 0.98;
                         if (loaded.DefaultCodePage != 65001 && loaded.DefaultCodePage != 874) loaded.DefaultCodePage = 65001;

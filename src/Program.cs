@@ -24,10 +24,50 @@ namespace WindowsTerminalLTSC
             {
             }
 
+            SystemIntegration.PurgeLegacyDirectories();
+
             string initialDir = Environment.CurrentDirectory;
+            string startupCommand = null;
+
+            if (args == null || args.Length == 0)
+            {
+                string appBase = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\', '/');
+                string installBase = SystemIntegration.GetActiveInstallDir().TrimEnd('\\', '/');
+                string curTrim = (initialDir ?? "").TrimEnd('\\', '/');
+                if (string.Equals(curTrim, appBase, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(curTrim, installBase, StringComparison.OrdinalIgnoreCase))
+                {
+                    initialDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                }
+            }
 
             if (args != null && args.Length > 0)
             {
+                if (string.Equals(args[0], "--tui-wait", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (args.Length >= 2 && !string.IsNullOrEmpty(args[1]))
+                    {
+                        try
+                        {
+                            EventWaitHandle ev;
+                            if (EventWaitHandle.TryOpenExisting(args[1], out ev))
+                            {
+                                using (ev)
+                                {
+                                    ev.WaitOne(2500);
+                                }
+                            }
+                        }
+                        catch
+                        {
+                        }
+                    }
+                    return 0;
+                }
+                if (string.Equals(args[0], "--tui-host", StringComparison.OrdinalIgnoreCase))
+                {
+                    return TuiHostWorker.Run(args);
+                }
                 if (string.Equals(args[0], "--self-test", StringComparison.OrdinalIgnoreCase))
                 {
                     return RunSelfTest();
@@ -52,30 +92,49 @@ namespace WindowsTerminalLTSC
                     SystemIntegration.UnregisterDefaultTerminal();
                     return 0;
                 }
-
-                string candidate = args[0];
-                if ((string.Equals(candidate, "-d", StringComparison.OrdinalIgnoreCase) ||
-                     string.Equals(candidate, "--startingDirectory", StringComparison.OrdinalIgnoreCase)) &&
-                    args.Length > 1)
+                if (string.Equals(args[0], "--uninstall", StringComparison.OrdinalIgnoreCase))
                 {
-                    candidate = args[1];
+                    bool isSilent = args.Length > 1 && string.Equals(args[1], "--silent", StringComparison.OrdinalIgnoreCase);
+                    return SystemIntegration.PerformFullUninstall(isSilent);
                 }
-
-                if (!string.IsNullOrWhiteSpace(candidate))
+                if (string.Equals(args[0], "--elevated-b64", StringComparison.OrdinalIgnoreCase) && args.Length >= 2)
                 {
-                    candidate = candidate.Trim().Trim('"');
-                    if (candidate.EndsWith(":\"", StringComparison.Ordinal))
-                        candidate = candidate.Substring(0, candidate.Length - 1) + "\\";
-                    else if (candidate.EndsWith(":", StringComparison.Ordinal))
-                        candidate = candidate + "\\";
-
-                    if (Directory.Exists(candidate))
+                    try
                     {
-                        initialDir = Path.GetFullPath(candidate);
+                        string decodedDir = Encoding.UTF8.GetString(Convert.FromBase64String(args[1]));
+                        if (!string.IsNullOrWhiteSpace(decodedDir) && Directory.Exists(decodedDir))
+                            initialDir = decodedDir;
+                        if (args.Length >= 3 && !string.IsNullOrWhiteSpace(args[2]))
+                            startupCommand = Encoding.UTF8.GetString(Convert.FromBase64String(args[2]));
                     }
-                    else if (File.Exists(candidate))
+                    catch { }
+                }
+                else
+                {
+                    string candidate = args[0];
+                    if ((string.Equals(candidate, "-d", StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(candidate, "--startingDirectory", StringComparison.OrdinalIgnoreCase)) &&
+                        args.Length > 1)
                     {
-                        initialDir = Path.GetDirectoryName(Path.GetFullPath(candidate));
+                        candidate = args[1];
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(candidate))
+                    {
+                        candidate = candidate.Trim().Trim('"');
+                        if (candidate.EndsWith(":\"", StringComparison.Ordinal))
+                            candidate = candidate.Substring(0, candidate.Length - 1) + "\\";
+                        else if (candidate.EndsWith(":", StringComparison.Ordinal))
+                            candidate = candidate + "\\";
+
+                        if (Directory.Exists(candidate))
+                        {
+                            initialDir = Path.GetFullPath(candidate);
+                        }
+                        else if (File.Exists(candidate))
+                        {
+                            initialDir = Path.GetDirectoryName(Path.GetFullPath(candidate));
+                        }
                     }
                 }
             }
@@ -89,7 +148,7 @@ namespace WindowsTerminalLTSC
             }
 
             var app = new Application();
-            var win = new MainWindow(initialDir);
+            var win = new MainWindow(initialDir, startupCommand);
             app.Run(win);
             return 0;
         }
